@@ -95,7 +95,7 @@ ${PORT_LIST:+- **If you need to start a web server for the user \, use these for
 - If you need a tool that requires root-level installation (apt, system packages),
   ask the user to run \`docker exec -u root ${CONTAINER_NAME} bash -c "apt-get update && apt-get install -y <package>"\`
 - **Git identity**: This sandbox uses a sandbox-only git identity (user.name: "pi-sandbox",
-  user.email: "pi-sandbox@localhost") to prevent commits under the user's real account.
+  user.email: "pi-sandbox@localhost") to prevent commits under the users real account.
   Do **not** change git user config in the repository you are working on.
 EOF
 )
