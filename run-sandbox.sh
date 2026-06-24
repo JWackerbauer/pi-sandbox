@@ -30,11 +30,15 @@ CONTAINER_NAME="$BASE_NAME"
 
 CONTAINER_HOME="/home/pi"
 
-# Ensure pi config directory and files exist for first-run on fresh machines
+# Ensure pi config directory and files exist for first-run on fresh machines.
+# Files must contain valid JSON ("{}") — pi refuses to read empty files.
 PI_AGENT_DIR="$HOME/.pi/agent"
 mkdir -p "$PI_AGENT_DIR/sessions"
-touch "$PI_AGENT_DIR/models.json" "$PI_AGENT_DIR/settings.json" \
-      "$PI_AGENT_DIR/trust.json" "$PI_AGENT_DIR/auth.json"
+for f in models.json settings.json trust.json auth.json; do
+  if [ ! -f "$PI_AGENT_DIR/$f" ]; then
+    printf '{}' > "$PI_AGENT_DIR/$f"
+  fi
+done
 
 # Enforce single sandbox per workspace (docker will fail if already running)
 echo "Container name: ${CONTAINER_NAME}"
