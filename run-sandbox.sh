@@ -23,7 +23,7 @@ done
 
 # ─── Derive container name from directory ──────────────────────────────
 # Path relative to $HOME with / → _, prefixed with pi_
-REL_PATH="${PWD#"$HOME"/}"
+REL_PATH="${DIR#"$HOME"/}"
 BASE_NAME="pi_${REL_PATH//\//_}"
 
 CONTAINER_NAME="$BASE_NAME"
@@ -94,9 +94,11 @@ ${PORT_LIST:+- **If you need to start a web server for the user \, use these for
   Use it to install most tools you need (e.g. \`brew install yq -q\`).
 - If you need a tool that requires root-level installation (apt, system packages),
   ask the user to run \`docker exec -u root ${CONTAINER_NAME} bash -c "apt-get update && apt-get install -y <package>"\`
-- **Git identity**: This sandbox uses its own git config (user.name: "pi-sandbox",
-  user.email: "pi-sandbox@localhost"). Do **not** change git user config in the repository
-  you are working on.
+- **Git identity**: This sandbox uses a sandbox-only git identity (user.name: "pi-sandbox",
+  user.email: "pi-sandbox@localhost") to prevent commits under the user's real account.
+  Do **not** change git user config in the repository you are working on.
+  Always create a new branch before committing — never commit directly to `main` or `master`.
+  After completing work, instruct the user on how to review and merge the branch.
 EOF
 )
 
