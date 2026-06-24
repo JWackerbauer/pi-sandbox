@@ -55,10 +55,10 @@ docker build -t pi-sandbox .
 
 There are a few preinstalled packages
 
-- Superpowers
-- pi-subagents
-- rpiv-todo
-- rpiv-ask-user-question
+- [Superpowers](github.com/obra/superpowers)
+- [pi-subagents](https://github.com/nicobailon/pi-subagents)
+- [rpiv-todo](https://github.com/juicesharp/rpiv-mono)
+- [rpiv-ask-user-question](https://github.com/juicesharp/rpiv-mono)
 
 If you want to enable these packages in your sandbox, create `.pi/settings.json` in your workspace
 
