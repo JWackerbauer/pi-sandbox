@@ -14,10 +14,6 @@ RUN groupadd -g 1001 pi \
   && chown pi:pi /workspace \
   && chown -R pi:pi /home/linuxbrew/.linuxbrew
 
-COPY pi-wrapper.sh /usr/local/bin/pi-wrapper.sh
-RUN chmod +x /usr/local/bin/pi-wrapper.sh
-RUN chown pi:pi /usr/local/bin/pi-wrapper.sh
-
 USER pi
 WORKDIR /workspace
 
@@ -26,6 +22,11 @@ ENV HOMEBREW_NO_AUTO_UPDATE=1
 
 RUN brew install tmux go yq
 
+RUN pi install git:github.com/obra/superpowers
+RUN pi install npm:pi-subagents
+RUN pi install npm:@juicesharp/rpiv-todo
+RUN pi install npm:@juicesharp/rpiv-ask-user-question
+
 COPY .tmux.conf /home/pi/.tmux.conf
 
-ENTRYPOINT ["/usr/local/bin/pi-wrapper.sh"]
+ENTRYPOINT ["pi"]

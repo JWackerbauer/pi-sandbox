@@ -1,0 +1,8 @@
+{
+    "extensions": [
+        "/home/pi/.pi/agent/git/github.com/obra/superpowers",
+        "/home/pi/.pi/agent/npm/node_modules/pi-subagents",
+        "/home/pi/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo",
+        "/home/pi/.pi/agent/npm/node_modules/@juicesharp/rpiv-ask-user-question"
+    ]
+}

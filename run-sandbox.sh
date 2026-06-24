@@ -48,7 +48,11 @@ WORKDIR="$CONTAINER_HOME/$REL_PATH"
 # Volume mounts
 DOCKER_ARGS+=(-v "$DIR:$WORKDIR")
 DOCKER_ARGS+=(-w "$WORKDIR")
-DOCKER_ARGS+=(-v "$HOME/.pi/agent:/home/pi/.pi/agent")
+DOCKER_ARGS+=(-v "$HOME/.pi/agent/models.json:/home/pi/.pi/agent/models.json")
+DOCKER_ARGS+=(-v "$HOME/.pi/agent/settings.json:/home/pi/.pi/agent/settings.json")
+DOCKER_ARGS+=(-v "$HOME/.pi/agent/trust.json:/home/pi/.pi/agent/trust.json")
+DOCKER_ARGS+=(-v "$HOME/.pi/agent/auth.json:/home/pi/.pi/agent/auth.json")
+DOCKER_ARGS+=(-v "$HOME/.pi/agent/sessions:/home/pi/.pi/agent/sessions")
 
 # Port forwards
 if [[ -n "$PORTS" ]]; then
@@ -74,7 +78,7 @@ You are running inside a Docker sandbox container named \`${CONTAINER_NAME}\`.
 - **User**: The current user is \`pi\` (non-root, uid 1001). Home directory is \`/home/pi\`.
   You do **not** have sudo access.
 - **Working directory**: \`~/$REL_PATH\` is bind-mounted from the host.
-${PORT_LIST:+- **Forwarded ports**:\n${PORT_LIST}}- **Available CLI tools**: \`bash\`, \`git\`, \`node\`, \`npm\`, \`npx\`, \`go\`, \`jq\`, \`yq\`, \`rg\` (ripgrep),
+${PORT_LIST:+- **If you need to start a web server for the user \, use these forwarded ports**:\n${PORT_LIST}}- **Available CLI tools**: \`bash\`, \`git\`, \`node\`, \`npm\`, \`npx\`, \`go\`, \`jq\`, \`yq\`, \`rg\` (ripgrep),
   \`grep\`, \`sed\`, \`awk\`, \`find\`, \`ls\`, \`cat\`, \`curl\`.
 - **Package managers**: Homebrew is available at \`/home/linuxbrew/.linuxbrew/bin/brew\`.
   Use it to install most tools you need (e.g. \`brew install yq -q\`).
