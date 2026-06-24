@@ -22,6 +22,10 @@ ENV HOMEBREW_NO_AUTO_UPDATE=1
 
 RUN brew install tmux go yq
 
+# Set up git identity for the sandbox user (isolated from host)
+RUN git config --global user.email "pi-sandbox@localhost" \
+  && git config --global user.name "pi-sandbox"
+
 RUN pi install git:github.com/obra/superpowers
 RUN pi install npm:pi-subagents
 RUN pi install npm:@juicesharp/rpiv-todo
