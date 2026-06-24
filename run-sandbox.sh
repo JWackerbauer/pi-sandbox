@@ -21,9 +21,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ─── Pre-flight check ──────────────────────────────────────────────────
+if ! docker image inspect pi-sandbox >/dev/null 2>&1; then
+  echo "Error: pi-sandbox image not found. Build it first:"
+  echo "  docker build -t pi-sandbox ."
+  exit 1
+fi
+
 # ─── Derive container name from directory ──────────────────────────────
 # Path relative to $HOME with / → _, prefixed with pi_
-REL_PATH="${DIR#"$HOME"/}"
+if [[ "$DIR" == "$HOME/"* ]]; then
+  REL_PATH="${DIR#"$HOME"/}"
+else
+  echo "Error: directory must be under $HOME (got $DIR)"
+  exit 1
+fi
 BASE_NAME="pi_${REL_PATH//\//_}"
 
 CONTAINER_NAME="$BASE_NAME"

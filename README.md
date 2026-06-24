@@ -49,13 +49,13 @@ docker build -t pi-sandbox .
     - `trust.json`
     - `auth.json`
     - The `sessions` directory
-- `dir` (specified via `--dir` or current working directory) is mounted under `/home/pi/$REL_PATH`. `$REL_PATH` is `dir` relative to the host home directory. This let's pi track sessions accordingly in the host `~/.pi/agent`, so they can be resumed naturally.
+- `dir` (specified via `--dir` or current working directory) is mounted under `/home/pi/$REL_PATH`. `$REL_PATH` is `dir` relative to the host home directory. This lets pi track sessions accordingly in the host `~/.pi/agent`, so they can be resumed naturally.
 
 ## Preinstalled Packages
 
 There are a few preinstalled packages
 
-- [Superpowers](github.com/obra/superpowers)
+- [Superpowers](https://github.com/obra/superpowers)
 - [pi-subagents](https://github.com/nicobailon/pi-subagents)
 - [rpiv-todo](https://github.com/juicesharp/rpiv-mono)
 - [rpiv-ask-user-question](https://github.com/juicesharp/rpiv-mono)
