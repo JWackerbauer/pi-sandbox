@@ -2,13 +2,23 @@
 
 A minimal Docker sandbox for the [pi](https://github.com/Earendil-Works/pi-coding-agent) coding agent.
 
-> ❗️ **Caution:**
-> 
-> The sandbox should prevent the agent from breaking out, however the agent can work in the directory you mount. 
-> 
-> Be smart: 
-> - Use git
-> - Don't put secrets in mounted directories
+> [!CAUTION]
+> ## Sandbox Security
+>
+>
+> The sandbox runs as a **non-root** user with dropped capabilities and a `no-new-privileges` flag, but it is **not** a hardened container. Please keep the following in mind:
+>
+>
+>
+> - **The agent has full read/write access** to the mounted working directory — it can create, modify, and delete any files there. Always use git so you can roll back.
+>
+> - **Do not place secrets** (API keys, credentials, tokens) in the mounted directory. The agent can read them.
+>
+> - **Pi config files are mounted read-write** (`settings.json`, `models.json`, `trust.json`, `auth.json`, `sessions/`). The agent can modify these, which may affect your host-side pi configuration.
+>
+> - **Network access is unrestricted.** The agent can make outbound HTTP requests, install npm packages, and run `brew install`. Treat it as if it has full internet access.
+>
+> - **Resource limits:** 2 GB memory, 200 PIDs. Long-running or resource-intensive tasks may be killed.
 
 ## Building
 
