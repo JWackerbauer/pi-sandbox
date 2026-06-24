@@ -97,8 +97,6 @@ ${PORT_LIST:+- **If you need to start a web server for the user \, use these for
 - **Git identity**: This sandbox uses a sandbox-only git identity (user.name: "pi-sandbox",
   user.email: "pi-sandbox@localhost") to prevent commits under the user's real account.
   Do **not** change git user config in the repository you are working on.
-  Always create a new branch before committing — never commit directly to `main` or `master`.
-  After completing work, instruct the user on how to review and merge the branch.
 EOF
 )
 
