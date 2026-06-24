@@ -30,6 +30,12 @@ CONTAINER_NAME="$BASE_NAME"
 
 CONTAINER_HOME="/home/pi"
 
+# Ensure pi config directory and files exist for first-run on fresh machines
+PI_AGENT_DIR="$HOME/.pi/agent"
+mkdir -p "$PI_AGENT_DIR/sessions"
+touch "$PI_AGENT_DIR/models.json" "$PI_AGENT_DIR/settings.json" \
+      "$PI_AGENT_DIR/trust.json" "$PI_AGENT_DIR/auth.json"
+
 # Enforce single sandbox per workspace (docker will fail if already running)
 echo "Container name: ${CONTAINER_NAME}"
 
