@@ -1,7 +1,7 @@
 FROM node:24-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends maven curl bash ca-certificates git ripgrep jq \
+  && apt-get install -y --no-install-recommends maven curl wget bash ca-certificates git ripgrep jq \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
@@ -20,7 +20,7 @@ WORKDIR /workspace
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
 ENV HOMEBREW_NO_AUTO_UPDATE=1
 
-RUN brew install tmux go yq
+RUN brew install tmux go yq uv fd gh azure-cli
 
 # Set up git identity for the sandbox user (isolated from host)
 RUN git config --global user.email "pi-sandbox@localhost" \
@@ -32,5 +32,6 @@ RUN pi install npm:@juicesharp/rpiv-todo
 RUN pi install npm:@juicesharp/rpiv-ask-user-question
 
 COPY .tmux.conf /home/pi/.tmux.conf
+COPY --chown=pi:pi skills /home/pi/.pi/agent/skills
 
 ENTRYPOINT ["pi"]
