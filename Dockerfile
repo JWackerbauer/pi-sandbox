@@ -5,16 +5,17 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Create non-root user (no sudo access)
 RUN groupadd -g 1001 pi \
   && useradd -m -u 1001 -g 1001 -s /bin/bash pi \
   && mkdir -p /workspace \
+  && mkdir -p /home/linuxbrew/.linuxbrew/bin \
   && chown pi:pi /workspace \
-  && chown -R pi:pi /home/linuxbrew/.linuxbrew
+  && chown -R pi:pi /home/linuxbrew
 
 USER pi
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 WORKDIR /workspace
 
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
