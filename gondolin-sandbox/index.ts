@@ -140,7 +140,7 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
   };
 }
 
-const workBranchName = "test"
+const workBranchName = "gondolin"
 const guestGitDir = "/source/.git"
 
 export default function (pi: ExtensionAPI) {
