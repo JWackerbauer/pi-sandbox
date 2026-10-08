@@ -28,6 +28,10 @@ export interface SandboxEntryData {
   branch: string;
 }
 
+// Custom message type of the proactive subagent settlement notice, queued
+// into the parent session when a subagent finishes.
+export const SUBAGENT_RESULT_TYPE = "gondolin.subagent-result";
+
 // Work branch used when the sandbox starts outside of /build-in-sandbox
 // (e.g. a tool needs a VM before the user has requested a build).
 export const DEFAULT_WORK_BRANCH = "gondolin-test";

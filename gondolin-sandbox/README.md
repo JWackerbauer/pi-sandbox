@@ -96,6 +96,13 @@ each running in its own **detached sandbox session**:
   If subagents are still running, it blocks until at least one finishes, so the
   agent can "stop and wait".
 
+**Proactive delivery:** the agent does not have to poll. When a subagent
+finishes, the extension injects its result into the parent session as a custom
+message (`gondolin.subagent-result`) that triggers the agent's next turn —
+queued as a follow-up if the parent is mid-turn, immediate if idle. If the
+agent already fetched that result via `subagent_results`, the notice is
+suppressed.
+
 When a subagent finishes, its worktree is removed and its VM is closed, but the
 **branch stays** in the shared repository — that is the persistent artifact.
 The parent agent reviews it (`git log` / `git diff`) and merges it into its own

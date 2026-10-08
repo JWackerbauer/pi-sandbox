@@ -14,11 +14,12 @@ import { Type } from "@earendil-works/pi-ai";
 import {
   DEFAULT_WORK_BRANCH,
   SANDBOX_ENTRY_TYPE,
+  SUBAGENT_RESULT_TYPE,
   type SandboxEntryData,
 } from "./config";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
-import { createSubagentManager } from "./subagents";
+import { createSubagentManager, formatSettledNotice } from "./subagents";
 import { createGondolinReadOps } from "./ops/read";
 import { createGondolinWriteOps } from "./ops/write";
 import { createGondolinEditOps } from "./ops/edit";
@@ -57,11 +58,31 @@ export default function (pi: ExtensionAPI) {
 
   // Detached subagent sessions: each gets its own VM and work branch, runs
   // in the background, and is collected via the subagent_results tool.
+  // When a subagent settles, its result is proactively queued into this
+  // session as a custom message that triggers the agent's next turn — the
+  // agent does not have to poll for it.
   const subagents = createSubagentManager({
     localCwd,
     localGitDir,
     parentBranch: () => sandbox.branch ?? DEFAULT_WORK_BRANCH,
     onStatusChange: () => updateStatus(lastCtx),
+    onSettled: (rec) => {
+      if (shuttingDown) return;
+      pi.sendMessage(
+        {
+          customType: SUBAGENT_RESULT_TYPE,
+          content: formatSettledNotice(rec),
+          display: true,
+          details: { id: rec.id, branch: rec.branch },
+        },
+        {
+          triggerTurn: true,
+          // Mid-turn: queued as a follow-up that starts a new turn once the
+          // current run finishes. Idle: appended and starts a turn now.
+          deliverAs: "followUp",
+        },
+      );
+    },
   });
 
   // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
@@ -165,9 +186,12 @@ export default function (pi: ExtensionAPI) {
         "gets its own VM and a fresh work branch created from your current " +
         "branch, and works on the given task in the background while you " +
         "continue. You can spawn several subagents and let them run in " +
-        "parallel. Use subagent_results to wait for a subagent to finish and " +
-        "get its summary and commits, then review its branch and merge it " +
-        "into yours with git merge if the work is good.",
+        "parallel. When a subagent finishes, its result (summary and " +
+        "commits) is delivered to you proactively as a message on your next " +
+        "turn — you do not have to poll for it. Use subagent_results to " +
+        "check status, wait for a specific subagent, or re-fetch results. " +
+        "Review a finished branch and merge it into yours with git merge " +
+        "if the work is good.",
       parameters: Type.Object({
         prompt: Type.String({
           description: "What the subagent should build or do",
@@ -196,9 +220,9 @@ export default function (pi: ExtensionAPI) {
                 text:
                   `Subagent ${rec.id} is running on branch ${rec.branch} ` +
                   `(created from ${rec.branchStart}). ` +
-                  `Continue your work or spawn more subagents; call ` +
-                  `subagent_results to wait for it to finish and get its ` +
-                  `summary and commits.`,
+                  `Continue your work or spawn more subagents; its result ` +
+                  `will be delivered to you when it finishes. You can also ` +
+                  `call subagent_results to wait for it.`,
               },
             ],
             details: { id: rec.id, branch: rec.branch },
@@ -215,22 +239,24 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
-  // Collect subagent results. Returns the results of finished subagents
-  // (summary + commits) and the status of running ones. Blocks until at
-  // least one running subagent finishes, so the agent can "stop and wait".
+  // Check subagent status and collect results. Results are also delivered
+  // proactively when a subagent finishes; use this tool to check on
+  // running subagents, wait for a specific one, or re-fetch results.
   pi.registerTool(
     defineTool({
       name: "subagent_results",
       label: "Subagent results",
       promptSnippet:
         "subagent_results: get the status and results of spawned subagents " +
-        "(waits until one finishes)",
+        "(waits until one finishes; results are also delivered proactively)",
       description:
         "Check subagent status. Returns the results of finished subagents " +
         "(final summary and commit list) and the status of running ones. " +
         "If subagents are still running and none has finished yet, this " +
-        "blocks until at least one finishes. Optionally pass an id to wait " +
-        "for a specific subagent only.",
+        "blocks until at least one finishes. Finished subagents also notify " +
+        "you proactively with a message, so this tool is mainly for waiting " +
+        "on running subagents or re-fetching results. Optionally pass an " +
+        "id to wait for a specific subagent only.",
       parameters: Type.Object({
         id: Type.Optional(
           Type.String({ description: "Only wait for this subagent id" }),
@@ -263,8 +289,9 @@ export default function (pi: ExtensionAPI) {
       `The shared git repository is the ONLY persistence in the sandbox; the rest of the filesystem is ephemeral. ` +
       `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
       `You can delegate work to subagents with the spawn_subagent tool: each runs in its own detached sandbox session ` +
-      `on a fresh branch created from your branch, in the background. Collect their work with subagent_results, ` +
-      `review the branch, and merge it into your branch with git merge if the work is good.`;
+      `on a fresh branch created from your branch, in the background. When one finishes, its result (summary and commits) ` +
+      `is delivered to you as a message; review the branch and merge it into your branch with git merge if the work is good. ` +
+      `Use subagent_results to check on running subagents or wait for a specific one.`;
   });
 }
 

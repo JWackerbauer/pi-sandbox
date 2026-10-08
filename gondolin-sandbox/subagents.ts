@@ -73,6 +73,11 @@ interface InternalRecord extends SubagentRecord {
   vm: VM;
   session: AgentSession | null;
   settle: Promise<void>;
+  /**
+   * Set when the agent has fetched this record's settled result via
+   * `results()`, so the proactive settlement message is not sent twice.
+   */
+  acknowledged: boolean;
 }
 
 export interface SubagentManagerOptions {
@@ -82,12 +87,18 @@ export interface SubagentManagerOptions {
   parentBranch: () => string;
   /** Called after any status change, so the host can refresh UI. */
   onStatusChange?: () => void;
+  /**
+   * Called once when a subagent settles (completed or failed), unless the
+   * agent has already fetched the result via `results()`. The host uses it
+   * to proactively deliver the result to the parent agent.
+   */
+  onSettled?: (record: SubagentRecord) => void;
 }
 
 export function createSubagentManager(
   opts: SubagentManagerOptions,
 ): SubagentManager {
-  const { localCwd, localGitDir, parentBranch, onStatusChange } = opts;
+  const { localCwd, localGitDir, parentBranch, onStatusChange, onSettled } = opts;
 
   const records: InternalRecord[] = [];
   let counter = 0;
@@ -142,6 +153,7 @@ export function createSubagentManager(
         vm,
         session: null,
         settle,
+        acknowledged: false,
       };
       records.push(record);
       onStatusChange?.();
@@ -192,6 +204,16 @@ export function createSubagentManager(
       }
       onStatusChange?.();
       resolveSettle();
+      // Proactively deliver the result to the parent agent, unless the agent
+      // has fetched it via results(). Deferred to a macrotask: a results()
+      // waiter resumes in a microtask after the settle and marks the record
+      // acknowledged there, so the check below sees it. A subagent that
+      // settled long ago is checked immediately as well.
+      if (!record.acknowledged) {
+        setTimeout(() => {
+          if (!record.acknowledged) onSettled?.(publicRecord(record));
+        }, 0);
+      }
     }
   }
 
@@ -251,6 +273,9 @@ export function createSubagentManager(
       const settled = relevant().filter((r) => r.status !== "running");
       const running = relevant().filter((r) => r.status === "running");
       if (settled.length > 0 || running.length === 0) {
+        // The agent now has these results; don't send the proactive
+        // settlement notice for them.
+        for (const r of settled) r.acknowledged = true;
         return formatResults();
       }
       // The caller was aborted while subagents are still running: return
@@ -274,8 +299,8 @@ export function createSubagentManager(
     return records.filter((r) => r.status === "running").length;
   }
 
-  function list(): SubagentRecord[] {
-    return records.map((r) => ({
+  function publicRecord(r: InternalRecord): SubagentRecord {
+    return {
       id: r.id,
       branch: r.branch,
       branchStart: r.branchStart,
@@ -284,7 +309,11 @@ export function createSubagentManager(
       summary: r.summary,
       commits: r.commits,
       error: r.error,
-    }));
+    };
+  }
+
+  function list(): SubagentRecord[] {
+    return records.map(publicRecord);
   }
 
   async function shutdown(): Promise<void> {
@@ -349,24 +378,7 @@ export function createSubagentManager(
     }
     const lines: string[] = ["Subagents:"];
     for (const r of records) {
-      lines.push(
-        `[${r.id}] branch: ${r.branch} — ${r.status === "failed" ? "FAILED" : r.status}`,
-      );
-      if (r.status === "running") continue;
-      lines.push(`  based on: ${r.branchStart}`);
-      if (r.status === "failed" && r.error) {
-        lines.push(`  error: ${r.error}`);
-      }
-      if (r.commits && r.commits.length > 0) {
-        lines.push("  commits:");
-        for (const c of r.commits) lines.push(`    ${c}`);
-      } else {
-        lines.push("  commits: (none)");
-      }
-      if (r.summary) {
-        lines.push("  summary:");
-        for (const s of r.summary.split("\n")) lines.push(`    ${s}`);
-      }
+      for (const line of formatSubagentResult(r).split("\n")) lines.push(line);
     }
     lines.push(
       "",
@@ -377,6 +389,42 @@ export function createSubagentManager(
   }
 
   return { spawn, results, runningCount, list, shutdown };
+}
+
+// ─── Formatting ─────────────────────────────────────────────────────────
+
+// One subagent, in the same shape the agent sees in subagent_results.
+export function formatSubagentResult(r: SubagentRecord): string {
+  const lines: string[] = [
+    `[${r.id}] branch: ${r.branch} — ${r.status === "failed" ? "FAILED" : r.status}`,
+  ];
+  if (r.status === "running") return lines.join("\n");
+  lines.push(`  based on: ${r.branchStart}`);
+  if (r.status === "failed" && r.error) {
+    lines.push(`  error: ${r.error}`);
+  }
+  if (r.commits && r.commits.length > 0) {
+    lines.push("  commits:");
+    for (const c of r.commits) lines.push(`    ${c}`);
+  } else {
+    lines.push("  commits: (none)");
+  }
+  if (r.summary) {
+    lines.push("  summary:");
+    for (const s of r.summary.split("\n")) lines.push(`    ${s}`);
+  }
+  return lines.join("\n");
+}
+
+// The proactive settlement notice delivered to the parent agent when a
+// subagent finishes without the agent having fetched it first.
+export function formatSettledNotice(r: SubagentRecord): string {
+  const state = r.status === "failed" ? "FAILED" : "finished";
+  return (
+    `[gondolin] Subagent ${r.id} ${state}.\n\n${formatSubagentResult(r)}\n\n` +
+    "Review the branch (`git log` / `git diff start..branch`) and merge it " +
+    "into your branch with `git merge <branch>` if the work is good."
+  );
 }
 
 // ─── Subagent system prompt ─────────────────────────────────────────────
