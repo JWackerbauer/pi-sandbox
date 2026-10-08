@@ -31,6 +31,7 @@ export function createSandbox(
     if (starting) return starting;
 
     starting = (async () => {
+      try {
       ctx?.ui.setStatus(
         "gondolin",
         ctx.ui.theme.fg(
@@ -70,8 +71,25 @@ export function createSandbox(
         export GUEST_GIT_DIR='${GUEST_GIT_DIR}' &&\\
         export GUEST_WORKSPACE='${GUEST_WORKSPACE}' &&\\
         export GIT_HOOKS_DIR='${GIT_HOOKS_DIR}' &&\\
-          chmod +x ${PREPARE_SCRIPT} && ${PREPARE_SCRIPT} || mkdir ${GUEST_WORKSPACE}
+          chmod +x ${PREPARE_SCRIPT} && ${PREPARE_SCRIPT}
       `);
+
+      if (result.exitCode !== 0) {
+        // Tear down the half-configured VM so a retry starts clean,
+        // then surface the failure to the caller.
+        try {
+          await created.close();
+        } catch {
+          // ignore: the VM is unusable anyway
+        }
+        const detail =
+          [result.stdout.trim(), result.stderr.trim()]
+            .filter((d) => d.length > 0)
+            .join("\n") || "(no output)";
+        throw new Error(
+          `gondolin: prepare.sh failed with exit code ${result.exitCode}\n${detail}`,
+        );
+      }
 
       vm = created;
       ctx?.ui.setStatus(
@@ -82,13 +100,15 @@ export function createSandbox(
         ),
       );
       ctx?.ui.notify(`
-        exitCode: ${result.exitCode}
-        stdout: ${result.stdout}
-        stderr: ${result.stderr}
         Gondolin VM ready. Branch ${WORK_BRANCH_NAME} of ${localCwd} created at ${GUEST_WORKSPACE}`,
         "info",
       );
       return created;
+      } catch (err) {
+        // Allow a later call to retry (e.g. after a transient failure).
+        starting = null;
+        throw err;
+      }
     })();
 
     return starting;
