@@ -10,15 +10,21 @@
       "rng-tools",
       "bash",
       "ca-certificates",
+      "clang",
+      "build-base",
       "curl",
       "e2fsprogs",
       "e2fsprogs-extra",
+      "jq",
       "nodejs",
       "npm",
+      "patch",
       "uv",
+      "ripgrep",
       "python3",
       "openssh",
-      "git"
+      "git",
+      "unzip"
     ],
     "initramfsPackages": [],
     "krunfwVersion": "v5.2.1"
