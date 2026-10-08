@@ -28,7 +28,7 @@ import { createGondolinReadOps } from "./ops/read";
 import { createGondolinWriteOps } from "./ops/write";
 import { launchDetachedVm, removeDetachedWorktree } from "./vm";
 
-export type SubagentStatus = "running" | "completed" | "failed";
+export type SubagentStatus = "running" | "completed" | "failed" | "aborted";
 
 export interface SubagentRecord {
   /** Stable id for this subagent within the session, e.g. "sub-1". */
@@ -67,6 +67,15 @@ export interface SubagentManager {
    * agent as a message after that delay — "check on it in N seconds".
    */
   status: (id?: string, deferSeconds?: number) => string;
+  /**
+   * Abort a specific subagent by id. If it is running, its session is
+   * disposed (which aborts the in-flight run and triggers cleanup: worktree
+   * removal + VM close); the branch and any commits already made are kept.
+   * Returns the (public) record, or `undefined` if no such subagent exists.
+   * If the subagent has already settled, nothing is aborted and its current
+   * record is returned as-is.
+   */
+  abort: (id: string) => SubagentRecord | undefined;
   /** Number of subagents still running. */
   runningCount: () => number;
   /** All subagents, in spawn order. */
@@ -88,6 +97,9 @@ interface InternalRecord extends SubagentRecord {
    * `status()`, so the proactive settlement message is not sent twice.
    */
   acknowledged: boolean;
+  // Set by abort() so run() records the outcome as "aborted" rather than
+  // "failed" when the disposed session's in-flight prompt rejects.
+  aborting: boolean;
   // Activity tracking, updated from the subagent session's event stream, used
   // by status() to surface stuck/looping subagents.
   startedAt: number;
@@ -199,6 +211,7 @@ export function createSubagentManager(
         session: null,
         settle,
         acknowledged: false,
+        aborting: false,
         startedAt: now,
         lastActivityAt: now,
         toolCalls: 0,
@@ -224,12 +237,23 @@ export function createSubagentManager(
     try {
       session = await createSubagentSession(record, model);
       record.session = session;
+      // If abort() raced ahead of the session finishing its start, stop it now
+      // (record.session was still null when abort() ran, so its dispose was a
+      // no-op).
+      if (record.aborting) session.dispose();
       await session.prompt(record.prompt);
       record.summary = session.getLastAssistantText() ?? "";
-      record.status = "completed";
+      // An aborted run settles (resolves) rather than throws, so the outcome
+      // is decided by the flag, not by an exception.
+      record.status = record.aborting ? "aborted" : "completed";
+      if (record.aborting) record.error = "aborted by the parent agent";
     } catch (err) {
-      record.status = "failed";
-      record.error = err instanceof Error ? err.message : String(err);
+      record.status = record.aborting ? "aborted" : "failed";
+      record.error = record.aborting
+        ? "aborted by the parent agent"
+        : err instanceof Error
+          ? err.message
+          : String(err);
       if (session) record.summary = session.getLastAssistantText() ?? "";
     } finally {
       if (session) session.dispose();
@@ -365,6 +389,20 @@ export function createSubagentManager(
     pendingDeferred.add(handle);
   }
 
+  // Abort a single subagent. Returns the public record (undefined if the id
+  // is unknown). Aborting is best-effort and idempotent: disposing an
+  // already-settled session is a no-op, and run()'s finally block performs
+  // the final cleanup either way.
+  function abort(id: string): SubagentRecord | undefined {
+    const record = records.find((r) => r.id === id);
+    if (!record) return undefined;
+    if (record.status === "running") {
+      record.aborting = true;
+      record.session?.dispose();
+    }
+    return publicRecord(record);
+  }
+
   function runningCount(): number {
     return records.filter((r) => r.status === "running").length;
   }
@@ -494,19 +532,31 @@ export function createSubagentManager(
     return hints;
   }
 
-  return { spawn, status, runningCount, list, shutdown };
+  return { spawn, status, abort, runningCount, list, shutdown };
 }
 
 // ─── Formatting ─────────────────────────────────────────────────────────
 
+// Human label for a status, uppercased for the terminal states.
+export function statusLabel(status: SubagentStatus): string {
+  switch (status) {
+    case "failed":
+      return "FAILED";
+    case "aborted":
+      return "ABORTED";
+    default:
+      return status;
+  }
+}
+
 // One subagent, in the same shape the agent sees in subagent_status.
 export function formatSubagentResult(r: SubagentRecord): string {
   const lines: string[] = [
-    `[${r.id}] branch: ${r.branch} — ${r.status === "failed" ? "FAILED" : r.status}`,
+    `[${r.id}] branch: ${r.branch} — ${statusLabel(r.status)}`,
   ];
   if (r.status === "running") return lines.join("\n");
   lines.push(`  based on: ${r.branchStart}`);
-  if (r.status === "failed" && r.error) {
+  if ((r.status === "failed" || r.status === "aborted") && r.error) {
     lines.push(`  error: ${r.error}`);
   }
   if (r.commits && r.commits.length > 0) {
@@ -525,11 +575,15 @@ export function formatSubagentResult(r: SubagentRecord): string {
 // The proactive settlement notice delivered to the parent agent when a
 // subagent finishes without the agent having fetched it first.
 export function formatSettledNotice(r: SubagentRecord): string {
-  const state = r.status === "failed" ? "FAILED" : "finished";
+  const state = statusLabel(r.status).toLowerCase();
+  const tail =
+    r.status === "aborted"
+      ? "It was aborted, so the branch may contain only partial work — review it " +
+        "and merge with `git merge <branch>` only if it is usable."
+      : "Review the branch (`git log` / `git diff start..branch`) and merge it " +
+        "into your branch with `git merge <branch>` if the work is good.";
   return (
-    `[gondolin] Subagent ${r.id} ${state}.\n\n${formatSubagentResult(r)}\n\n` +
-    "Review the branch (`git log` / `git diff start..branch`) and merge it " +
-    "into your branch with `git merge <branch>` if the work is good."
+    `[gondolin] Subagent ${r.id} ${state}.\n\n${formatSubagentResult(r)}\n\n` + tail
   );
 }
 

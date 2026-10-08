@@ -302,6 +302,79 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
+  // Stop a specific subagent. Use this when subagent_status shows one that is
+  // stuck or looping. Aborting disposes the subagent's session (aborting the
+  // in-flight run) and cleans up its VM and worktree, but keeps the branch
+  // and any commits already made, so the parent can still review and merge.
+  pi.registerTool(
+    defineTool({
+      name: "subagent_abort",
+      label: "Abort subagent",
+      promptSnippet:
+        "subagent_abort: stop a running subagent by id (its branch/commits are kept)",
+      description:
+        "Stop a running subagent by id. Use this when a subagent appears " +
+        "stuck or looping (see subagent_status). The subagent's session is " +
+        "aborted and its VM and worktree are cleaned up, but any commits it " +
+        "already made stay on its branch for you to review and merge. The " +
+        "settlement notice will follow once cleanup finishes. If the " +
+        "subagent has already finished, this is a no-op and reports its " +
+        "final state.",
+      parameters: Type.Object({
+        id: Type.String({ description: "The subagent id to abort" }),
+      }),
+      execute: async (_id, params, _signal, _onUpdate, ctx) => {
+        touch(ctx);
+        const id = params.id.trim();
+        if (id.length === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "gondolin: subagent_abort requires an id",
+              },
+            ],
+            details: {},
+            isError: true,
+          };
+        }
+        const rec = subagents.abort(id);
+        if (!rec) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `No subagent with id ${id} exists. Known ids: ${
+                  subagents.list().map((r) => r.id).join(", ") || "(none)"
+                }`,
+              },
+            ],
+            details: {},
+            isError: true,
+          };
+        }
+        // abort() is synchronous; the actual stop + cleanup happens in the
+        // background, confirmed by the settlement notice.
+        const wasRunning = rec.status === "running";
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: wasRunning
+                ? `Aborted subagent ${rec.id} (branch ${rec.branch}). Its ` +
+                  `session is stopping; any commits it already made remain on ` +
+                  `the branch for you to review. You'll be notified when ` +
+                  `cleanup finishes.`
+                : `Subagent ${rec.id} is not running (status: ${rec.status}); ` +
+                  `nothing to abort.`,
+            },
+          ],
+          details: { id: rec.id, branch: rec.branch, status: rec.status },
+        };
+      },
+    }),
+  );
+
   // Run user `!` commands inside the VM too
   pi.on("user_bash", (_event, _ctx) => {
     if (!sandbox.vm || !sandbox.workspace) return;
@@ -324,7 +397,7 @@ export default function (pi: ExtensionAPI) {
       `on a fresh branch created from your branch, in the background. When one finishes, its result (summary and commits) ` +
       `is delivered to you as a message; review the branch and merge it into your branch with git merge if the work is good. ` +
       `Use subagent_status to check on running subagents (non-blocking); pass defer_time (seconds) to check on one later ` +
-      `without blocking this turn.`;
+      `without blocking this turn. If one appears stuck or looping, stop it with subagent_abort (its commits are kept).`;
   });
 }
 

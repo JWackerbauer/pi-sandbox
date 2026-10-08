@@ -128,6 +128,13 @@ each running in its own **detached sandbox session**:
   returns immediately and the status is delivered to the agent as a message
   after the delay, so it can "dispatch a subagent and check on it in 5
   minutes" without blocking the session.
+- `subagent_abort(id)` — stop a running subagent by id (e.g. one that
+  `subagent_status` flagged as stuck or looping). The subagent's session is
+  aborted and its VM and worktree are cleaned up, but its **branch and any
+  commits already made are kept** for the parent to review and merge. The
+  subagent is recorded as `aborted` (distinct from `failed`), and the usual
+  settlement notice follows once cleanup finishes. If the subagent has already
+  settled, this is a no-op.
 
 **Proactive delivery:** the agent does not have to poll. When a subagent
 finishes, the extension injects its result into the parent session as a custom
