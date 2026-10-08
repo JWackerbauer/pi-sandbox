@@ -1,18 +1,27 @@
 {
   "name": "gondolin-sandbox",
   "version": "0.0.1",
-  "description": "",
+  "description": "Run pi's agent tools inside a Gondolin VM: a per-branch sandbox with detached subagent sessions.",
   "license": "ISC",
-  "author": "",
   "type": "commonjs",
-  "main": "index.js",
+  "main": "index.ts",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "@earendil-works/gondolin": "^0.13.0",
-    "@earendil-works/pi-ai": "^1.1.0",
-    "@earendil-works/pi-coding-agent": "^1.0.4"
+    "@earendil-works/gondolin": "^0.13.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@types/node": "^26.6.4"
