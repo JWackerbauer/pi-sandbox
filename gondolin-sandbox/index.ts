@@ -108,14 +108,16 @@ export default function (pi: ExtensionAPI) {
     return { operations: createGondolinBashOps(sandbox.vm, localCwd) };
   });
 
-  // Replace the CWD line in the system prompt so the model sees /workspace
+  // Replace the CWD section in the system prompt so the model sees /workspace
+  // and knows that only the git repository is persistent.
   pi.on("before_agent_start", async (event, ctx) => {
     await sandbox.ensureVm(ctx);
-    const modified = event.systemPrompt.replace(
-      `Current working directory: ${localCwd}`,
-      `Current working directory: ${GUEST_WORKSPACE} (sandboxed git worktree ${sandbox.branch ?? DEFAULT_WORK_BRANCH})`,
-    );
-    return { systemPrompt: modified };
+    event.systemPromptOptions.sections.cwd =
+      `${GUEST_WORKSPACE} (sandboxed git worktree on branch ` +
+      `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
+      `Only the shared git repository is persistent inside the sandbox; the rest ` +
+      `of the filesystem is ephemeral. Commit your work to the current branch ` +
+      `so it is not lost.`;
   });
 }
 
