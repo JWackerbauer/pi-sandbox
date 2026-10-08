@@ -61,6 +61,10 @@ The `before_agent_start` hook rewrites the CWD section of the system prompt so t
 knows it is in `/workspace` on its own branch, that only the git repository is
 persistent, and that it must commit to its branch and ask the user to review & merge.
 
+Subagent management instructions are not in the system prompt; they ship as a skill
+(`skills/subagents.md`) that pi loads from this package, so they only cost tokens when
+the agent loads the skill.
+
 ### Sessions
 
 - The guest workspace is `/<branch>`: the host's `.git` is shared by all sandbox
@@ -82,6 +86,12 @@ deterministic name derived from the first words of the prompt.
 ### Subagents
 
 Subagent VMs use smaller sizing by default (see **Configuration** below).
+
+### Skills
+
+The package bundles `skills/subagents.md`, which pi loads as a `subagents` skill.
+It contains the subagent management instructions (previously in the system prompt)
+and is available to the agent on demand.
 
 ### Configuration
 
@@ -109,7 +119,9 @@ The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondo
 ### Subagents
 
 The extension registers two tools that let the agent delegate work to subagents,
-each running in its own **detached sandbox session**:
+each running in its own **detached sandbox session**. How to use them (spawning,
+monitoring, aborting, merging branches) is documented in the bundled
+`subagents` skill (see [Skills](#skills)):
 
 - `spawn_subagent(prompt)` — same interface as `/build-in-sandbox`: the prompt is
   summarized into a fresh branch name (suffixed `-2`, `-3`, … if the name is taken),

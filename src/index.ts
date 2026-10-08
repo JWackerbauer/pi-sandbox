@@ -392,12 +392,7 @@ export default function (pi: ExtensionAPI) {
       `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
       `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
       `The shared git repository is the ONLY persistence in the sandbox; the rest of the filesystem is ephemeral. ` +
-      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
-      `You can delegate work to subagents with the spawn_subagent tool: each runs in its own detached sandbox session ` +
-      `on a fresh branch created from your branch, in the background. When one finishes, its result (summary and commits) ` +
-      `is delivered to you as a message; review the branch and merge it into your branch with git merge if the work is good. ` +
-      `Use subagent_status to check on running subagents (non-blocking); pass defer_time (seconds) to check on one later ` +
-      `without blocking this turn. If one appears stuck or looping, stop it with subagent_abort (its commits are kept).`;
+      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.`;
   });
 }
 
