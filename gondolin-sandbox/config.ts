@@ -28,6 +28,24 @@ export interface SandboxEntryData {
   branch: string;
 }
 
+// Custom message type of the proactive subagent settlement notice, queued
+// into the parent session when a subagent finishes.
+export const SUBAGENT_RESULT_TYPE = "gondolin.subagent-result";
+
+// Custom message type of a deferred subagent status check, queued into the
+// parent session when a scheduled status check (subagent_status with
+// defer_time) fires.
+export const SUBAGENT_STATUS_TYPE = "gondolin.subagent-status";
+
+// Tuning for subagent_status problem detection (see subagents.ts). A
+// running subagent with no activity for this long is flagged as "may be
+// stuck"; `SUBAGENT_LOOP_WINDOW` identical recent tool calls are flagged as
+// "may be looping".
+export const SUBAGENT_STUCK_IDLE_MS = 120_000;
+export const SUBAGENT_LOOP_WINDOW = 3;
+// How many recent tool-call fingerprints to retain for loop detection.
+export const SUBAGENT_RECENT_TOOL_WINDOW = 5;
+
 // Work branch used when the sandbox starts outside of /build-in-sandbox
 // (e.g. a tool needs a VM before the user has requested a build).
 export const DEFAULT_WORK_BRANCH = "gondolin-test";
@@ -40,3 +58,92 @@ export const BRANCH_NAME_MAX_LENGTH = 40;
 // with the pi-agent co-author trailer added by the prepare-commit-msg hook).
 export const GIT_EMAIL = "jan.wackerbauer@gmail.com";
 export const GIT_NAME = "Jan Wackerbauer";
+
+// ─── Configurable VM options ─────────────────────────────────────────────
+//
+// A GondolinConfig is loaded from config files (see config-loader.ts) and
+// controls VM sizing, shared secrets, and scratch mounts. Every value is
+// optional; the defaults below apply when a field is absent.
+
+/** Sizing for a Gondolin VM, in the guest runner's native syntax. */
+export interface VmSizing {
+  /** Memory in qemu syntax (e.g. "512M", "1G"). Default per VmSizingDefaults. */
+  memory?: string;
+  /** CPU count. Default per VmSizingDefaults. */
+  cpus?: number;
+}
+
+/** A shared secret wired into every VM via the Gondolin secret SDK. */
+export interface SecretConfig {
+  /** Host patterns this secret may be sent to (e.g. ["github.com"]). */
+  hosts: string[];
+  /**
+   * Guest-visible placeholder. When absent the Gondolin SDK generates a
+   * random placeholder. The real value always comes from an environment
+   * variable on the host, never from a config file.
+   */
+  placeholder?: string;
+}
+
+/**
+ * The full configurable surface for the gondolin sandbox. Loaded by
+ * config-loader.ts from `~/.pi/agent/gondolin.json` (global) merged with
+ * `<repo>/.pi/gondolin.json` (project), with secrets sourced from the
+ * process environment.
+ */
+export interface GondolinConfig {
+  /** Sizing for the main session VM. */
+  vm?: VmSizing;
+  /** Sizing for subagent VMs (smaller by default). */
+  subagent?: VmSizing;
+  /**
+   * Map of environment-variable name → secret config. For each entry the
+   * value is read from `process.env[name]` at VM launch and shared with the
+   * guest only for the listed hosts. An entry whose env var is unset is
+   * skipped.
+   */
+  secrets?: Record<string, SecretConfig>;
+  /**
+   * Enable the per-repo and per-branch scratch mounts (host tempdir →
+   * guest). Default true. Set false to disable both.
+   */
+  scratch?: boolean;
+}
+
+// Default sizing: the main VM keeps the runner defaults; subagent VMs are
+// deliberately smaller since they run in parallel alongside the main VM.
+export const DEFAULT_VM_SIZING: Required<VmSizing> = { memory: "1G", cpus: 2 };
+export const DEFAULT_SUBAGENT_SIZING: Required<VmSizing> = { memory: "512M", cpus: 1 };
+
+// ─── Scratch mounts ──────────────────────────────────────────────────────
+//
+// Scratch directories persist between session restarts because they live on
+// the host (under the platform tempdir), not in the VM's ephemeral disk.
+// There are two, both under a per-repo host root:
+//
+//   <tempdir>/gondolin/<repo-hash>/scratch            → /scratch          (shared, per repo)
+//   <tempdir>/gondolin/<repo-hash>/<branch>/scratch   → /scratch-local    (per branch)
+
+/** Guest mount point for the per-repo shared scratch dir. */
+export const GUEST_SCRATCH = "/scratch";
+/** Guest mount point for the per-branch scratch dir. */
+export const GUEST_SCRATCH_LOCAL = "/scratch-local";
+/** Host directory name used to scope a repo's scratch under the tempdir. */
+export const SCRATCH_HOST_DIRNAME = "gondolin";
+
+/**
+ * The host root for a repo's scratch dirs, under the platform tempdir.
+ * `repoKey` is a stable per-repo identifier (a sanitized repo name or a
+ * hash) chosen by config-loader.ts so paths are safe and unique.
+ */
+export function hostScratchRoot(tempdir: string, repoKey: string): string {
+  return `${tempdir}/${SCRATCH_HOST_DIRNAME}/${repoKey}`;
+}
+/** Host path of the per-repo shared scratch dir. */
+export function hostScratchShared(tempdir: string, repoKey: string): string {
+  return `${hostScratchRoot(tempdir, repoKey)}/scratch`;
+}
+/** Host path of the per-branch scratch dir. */
+export function hostScratchBranch(tempdir: string, repoKey: string, branch: string): string {
+  return `${hostScratchRoot(tempdir, repoKey)}/${branch}/scratch`;
+}

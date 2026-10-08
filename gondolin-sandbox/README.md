@@ -79,14 +79,96 @@ persistent, and that it must commit to its branch and ask the user to review & m
 (lowercase kebab-case, ≤ 40 chars). If the model returns no usable text, it falls back to a
 deterministic name derived from the first words of the prompt.
 
+### Subagents
+
+Subagent VMs use smaller sizing by default (see **Configuration** below).
+
+### Configuration
+
+The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondolin.json` (global) and `<repo>/.pi/gondolin.json` (project, overrides global field by field). Missing or invalid files are treated as empty. All fields are optional.
+
+```json
+{
+  "vm": { "memory": "2G", "cpus": 4 },
+  "subagent": { "memory": "512M", "cpus": 1 },
+  "secrets": {
+    "GH_TOKEN": { "hosts": ["github.com"] }
+  },
+  "scratch": true
+}
+```
+
+- **VM sizing** — `vm` sizes the main session's VM (default `1G` / 2 CPUs); `subagent` sizes subagent VMs, which run in parallel next to the main VM and are smaller by default (`512M` / 1 CPU). Values use the guest runner's native syntax (`memory`: qemu syntax like `"512M"`, `"1G"`; `cpus`: integer).
+- **Shared secrets** — `secrets` maps an *environment variable name* to a secret config. At VM launch the value is read from `process.env[name]` on the host and wired into the guest through Gondolin's secret SDK: the guest only ever sees a placeholder (random, or your `placeholder` if set) and requests carrying the secret may only be sent to the listed `hosts`. Entries whose env var is unset are skipped, so no secret value ever lives in a config file. Example: with `GH_TOKEN` set, the guest can authenticate to `github.com` without the token ever appearing in the VM.
+- **Scratch mounts** — two host directories are mounted into every guest so files survive VM/session restarts (they live under the host's tempdir, not in the VM's ephemeral disk):
+  - `/scratch` — per-repo, shared by every sandbox session of that repo. Host path: `<tempdir>/gondolin/<repo-key>/scratch`.
+  - `/scratch-local` — per-repo *and* per-branch, private to the current work branch. Host path: `<tempdir>/gondolin/<repo-key>/<branch>/scratch`.
+
+  `<repo-key>` is the repo's basename (sanitized to `[a-z0-9-]`) plus the first 8 hex chars of the sha256 of its absolute path, so same-named repos in different locations never collide. Set `"scratch": false` to disable both mounts.
+
+### Subagents
+
+The extension registers two tools that let the agent delegate work to subagents,
+each running in its own **detached sandbox session**:
+
+- `spawn_subagent(prompt)` — same interface as `/build-in-sandbox`: the prompt is
+  summarized into a fresh branch name (suffixed `-2`, `-3`, … if the name is taken),
+  a detached VM is launched for it with the branch created **from the parent's
+  current branch**, and a background pi agent session (SDK, in-memory, no
+  extensions/skills) works on the prompt with its four tools routed into the new
+  guest. The tool returns as soon as the VM is up — the parent keeps working and
+  can spawn more subagents in parallel.
+- `subagent_status([id], defer_time?)` — a **non-blocking** check on spawned
+  subagents. Returns each subagent's state; for running ones it includes
+  elapsed time, last activity, recent tool calls, and heuristics that flag a
+  subagent that appears **stuck** (no recent activity) or **looping**
+  (repeating the same action). It does *not* block: finished subagents report
+  themselves proactively, so this is for monitoring running ones. Passing
+  `defer_time` (seconds) schedules the check in the background — the tool
+  returns immediately and the status is delivered to the agent as a message
+  after the delay, so it can "dispatch a subagent and check on it in 5
+  minutes" without blocking the session.
+- `subagent_abort(id)` — stop a running subagent by id (e.g. one that
+  `subagent_status` flagged as stuck or looping). The subagent's session is
+  aborted and its VM and worktree are cleaned up, but its **branch and any
+  commits already made are kept** for the parent to review and merge. The
+  subagent is recorded as `aborted` (distinct from `failed`), and the usual
+  settlement notice follows once cleanup finishes. If the subagent has already
+  settled, this is a no-op.
+
+**Proactive delivery:** the agent does not have to poll. When a subagent
+finishes, the extension injects its result into the parent session as a custom
+message (`gondolin.subagent-result`) that triggers the agent's next turn —
+queued as a follow-up if the parent is mid-turn, immediate if idle. If the
+agent already fetched that result via `subagent_status`, the notice is
+suppressed.
+
+**Deferred status checks:** `subagent_status` with `defer_time` schedules a
+background status check; when the timer fires, the extension injects the freshly
+computed status into the parent session as a custom message
+(`gondolin.subagent-status`) that triggers the agent's next turn. Pending
+delayed checks are cancelled on session shutdown.
+
+When a subagent finishes, its worktree is removed and its VM is closed, but the
+**branch stays** in the shared repository — that is the persistent artifact.
+The parent agent reviews it (`git log` / `git diff`) and merges it into its own
+branch with `git merge <branch>` (both branches' refs live in the same shared
+`.git`, and merging a branch checked out in another worktree is fine).
+
+Subagent branches are serialized at spawn time (name allocation + worktree
+creation), so concurrent spawns cannot collide. On parent session shutdown all
+running subagents are aborted and cleaned up.
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `index.ts` | Extension entry point: registers the command, tools, and session hooks |
 | `commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
-| `vm.ts` | VM lifecycle: launch, replace, close |
-| `config.ts` | Guest layout, git identity, limits, session entry type |
+| `vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
+| `subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
+| `config.ts` | Guest layout, git identity, limits, session entry type, config contract |
+| `config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret resolution |
 | `branch-name.ts` | Prompt → branch name summarizer and sanitizer |
 | `guest-path.ts` | Host path → guest path mapping |
 | `ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |
@@ -98,6 +180,9 @@ deterministic name derived from the first words of the prompt.
 
 - The sandbox is **per session**: each pi session runs its own extension instance and its
   own VM, so you can work on multiple branches in parallel across sessions. Launching a
-  different branch *within the same session* replaces that session's VM.
-- Everything in the guest except the git repository is ephemeral — the agent is told this
-  and must commit its work to its branch.
+  different branch *within the same session* replaces that session's VM. Subagents are the
+  same idea *within* one session: each gets its own detached VM and branch, running in the
+  background next to the parent's VM.
+- Everything in the guest except the git repository and the scratch mounts (`/scratch`,
+  `/scratch-local`) is ephemeral — the agent is told this and must commit its work to its
+  branch (subagents too; their branches outlive their VMs).
