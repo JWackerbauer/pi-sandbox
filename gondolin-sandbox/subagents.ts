@@ -14,10 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import type { VM } from "@earendil-works/gondolin";
-import {
-  requestBranchName,
-  requestDistinctBranchName,
-} from "./branch-name";
+import { requestDistinctBranchName } from "./branch-name";
 import { guestWorkspace } from "./config";
 import { createGondolinBashOps } from "./ops/bash";
 import { createGondolinEditOps } from "./ops/edit";
@@ -129,12 +126,10 @@ export function createSubagentManager(
       // Ask the model for a branch name; if it collides with an existing
       // branch in the shared .git, recover by prompting the model again for a
       // distinct name (with a deterministic suffix as a final fallback).
-      const base = await requestBranchName(model, ctx.modelRegistry, prompt);
       const branch = await requestDistinctBranchName(
         model,
         ctx.modelRegistry,
         prompt,
-        base,
         refExists,
       );
 
@@ -150,9 +145,8 @@ export function createSubagentManager(
         localCwd,
         localGitDir,
         branchStart,
-        // isSubagent landed in vm.ts by the sizing task; cast until it does.
         isSubagent: true,
-      } as Parameters<typeof launchDetachedVm>[1]);
+      });
 
       counter += 1;
       let resolveSettle: () => void;
