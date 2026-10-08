@@ -9,6 +9,8 @@
     "pi-package"
   ],
   "pi": {
+    "name": "gondolin-sandbox",
+    "description": "Run pi's agent tools inside a Gondolin VM: a per-branch sandbox with detached subagent sessions.",
     "extensions": [
       "./src/index.ts"
     ]
