@@ -302,7 +302,8 @@ export default function (pi: ExtensionAPI) {
     await ensureVm(ctx);
     const modified = event.systemPrompt.replace(
       `Current working directory: ${localCwd}`,
-      `Current working directory: ${GUEST_WORKSPACE} (sandboxed git worktree ${workBranchName})`,
+      `Current working directory: ${GUEST_WORKSPACE}, git worktree, your branch: ${workBranchName}
+You are inside an ephemeral sandbox, you share a git repository with the user. The git repository is the only form of persistence. You must commit your work. You must commit on your branch (${workBranchName}) and your branch only.`,
     );
     return { systemPrompt: modified };
   });
