@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -13,11 +15,14 @@ import {
 import { Type } from "@earendil-works/pi-ai";
 import {
   DEFAULT_WORK_BRANCH,
+  GUEST_SCRATCH,
+  GUEST_SCRATCH_LOCAL,
   SANDBOX_ENTRY_TYPE,
   SUBAGENT_RESULT_TYPE,
   SUBAGENT_STATUS_TYPE,
   type SandboxEntryData,
 } from "./config";
+import { loadGondolinConfig } from "./config-loader";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
@@ -386,13 +391,27 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     touch(ctx);
     await sandbox.ensureVm(ctx);
+    // Scratch mounts are enabled by default; check the config so the prompt
+    // only advertises them when they are actually mounted (see vm.ts).
+    const config = loadGondolinConfig(
+      localCwd,
+      path.join(os.homedir(), ".pi", "agent"),
+    );
+    const scratchEnabled = config.scratch !== false;
     event.systemPromptOptions.sections.cwd =
       `You are working in a gondolin sandbox; cwd: ${sandbox.workspace} (a git worktree owned by you, branch: ` +
       `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
       `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
       `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
-      `The shared git repository is the ONLY persistence in the sandbox; the rest of the filesystem is ephemeral. ` +
+      `The shared git repository is the ONLY persistent storage in your workspace; the rest of the filesystem is ephemeral. ` +
       `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
+      (scratchEnabled
+        ? `Two scratch directories also persist across VM restarts (they live on the host, not in git): ` +
+          `${GUEST_SCRATCH} is shared with every other session of this repository, so use it only for things that are ` +
+          `universally useful to all of them (e.g. shared caches or downloaded artifacts); ` +
+          `${GUEST_SCRATCH_LOCAL} is private to your branch and can hold anything else (build outputs, temporary data).\n`
+        : ``) +
+
       `You can delegate work to subagents with the spawn_subagent tool: each runs in its own detached sandbox session ` +
       `on a fresh branch created from your branch, in the background. When one finishes, its result (summary and commits) ` +
       `is delivered to you as a message; review the branch and merge it into your branch with git merge if the work is good. ` +
