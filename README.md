@@ -35,7 +35,9 @@ pi '/build-in-sandbox <what do you want to build?>'
 ### The guest
 
 - `image.json` defines an Alpine 3.23 aarch64 image (krun firmware 5.2.1) with git,
-  node, python, uv, bash, and friends.
+  node, python, uv, bash, and friends. Build its assets (kernel, initramfs,
+  rootfs) into `image/assets` (gitignored) with `npm run build:basic-image`.
+  The extension loads the assets from `image/assets` on VM launch.
 - The host's `.git` directory is mounted into the guest at `/source/.git`.
 - On launch, the extension writes `scripts/prepare.sh` and a `prepare-commit-msg` git hook
   into the guest, then runs `prepare.sh`, which:

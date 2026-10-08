@@ -14,6 +14,7 @@
     ]
   },
   "scripts": {
+    "build:basic-image": "gondolin build --config image/image.json --output image/assets",
     "test": "tsx --test 'src/*.test.ts'"
   },
   "dependencies": {
