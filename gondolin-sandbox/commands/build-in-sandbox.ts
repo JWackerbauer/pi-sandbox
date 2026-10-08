@@ -41,7 +41,7 @@ export function registerBuildCommand(
 
       ctx.ui.setStatus(
         "gondolin",
-        ctx.ui.theme.fg("accent", "Gondolin: naming branch…"),
+        ctx.ui.theme.fg("accent", "gondolin: naming branch…"),
       );
       const branch = await requestBranchName(
         model,

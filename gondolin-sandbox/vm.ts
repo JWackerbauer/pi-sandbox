@@ -42,13 +42,7 @@ export function createSandbox(
     ctx?: ExtensionContext,
   ): Promise<VM> {
     try {
-      ctx?.ui.setStatus(
-        "gondolin",
-        ctx.ui.theme.fg(
-          "accent",
-          `Gondolin: starting (mount ${GUEST_WORKSPACE})`,
-        ),
-      );
+      setStatus(ctx, "starting…");
 
       const created = await VM.create({
         sandbox: {
@@ -105,13 +99,7 @@ export function createSandbox(
 
       vm = created;
       branch = requested;
-      ctx?.ui.setStatus(
-        "gondolin",
-        ctx.ui.theme.fg(
-          "accent",
-          `Gondolin: running (${requested} -> ${GUEST_WORKSPACE})`,
-        ),
-      );
+      setStatus(ctx, requested);
       ctx?.ui.notify(`
         Gondolin VM ready. Branch ${requested} of ${localCwd} created at ${GUEST_WORKSPACE}`,
         "info",
@@ -119,6 +107,9 @@ export function createSandbox(
       return created;
     } catch (err) {
       branch = null;
+      // Drop the "starting" status; the error itself is surfaced by
+      // pi to the user.
+      ctx?.ui.setStatus("gondolin", undefined);
       throw err;
     }
   }
@@ -173,4 +164,14 @@ export function createSandbox(
       return branch;
     },
   };
+}
+
+// Status-bar indicator: "gondolin: <state>" while the sandbox is
+// starting/running, cleared when it is down.
+function setStatus(ctx: ExtensionContext | undefined, state: string): void {
+  if (!ctx) return;
+  ctx.ui.setStatus(
+    "gondolin",
+    ctx.ui.theme.fg("accent", `gondolin: ${state}`),
+  );
 }

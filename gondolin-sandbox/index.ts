@@ -52,9 +52,10 @@ export default function (pi: ExtensionAPI) {
     if (!sandbox.vm) return;
     ctx.ui.setStatus(
       "gondolin",
-      ctx.ui.theme.fg("muted", "Gondolin: stopping"),
+      ctx.ui.theme.fg("muted", "gondolin: stopping"),
     );
     await sandbox.close();
+    ctx.ui.setStatus("gondolin", undefined);
   });
 
   pi.registerTool({
