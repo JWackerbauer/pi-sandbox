@@ -79,13 +79,41 @@ persistent, and that it must commit to its branch and ask the user to review & m
 (lowercase kebab-case, ≤ 40 chars). If the model returns no usable text, it falls back to a
 deterministic name derived from the first words of the prompt.
 
+### Subagents
+
+The extension registers two tools that let the agent delegate work to subagents,
+each running in its own **detached sandbox session**:
+
+- `spawn_subagent(prompt)` — same interface as `/build-in-sandbox`: the prompt is
+  summarized into a fresh branch name (suffixed `-2`, `-3`, … if the name is taken),
+  a detached VM is launched for it with the branch created **from the parent's
+  current branch**, and a background pi agent session (SDK, in-memory, no
+  extensions/skills) works on the prompt with its four tools routed into the new
+  guest. The tool returns as soon as the VM is up — the parent keeps working and
+  can spawn more subagents in parallel.
+- `subagent_results([id])` — returns the results of finished subagents (final
+  summary + `git log --oneline start..branch`) and the status of running ones.
+  If subagents are still running, it blocks until at least one finishes, so the
+  agent can "stop and wait".
+
+When a subagent finishes, its worktree is removed and its VM is closed, but the
+**branch stays** in the shared repository — that is the persistent artifact.
+The parent agent reviews it (`git log` / `git diff`) and merges it into its own
+branch with `git merge <branch>` (both branches' refs live in the same shared
+`.git`, and merging a branch checked out in another worktree is fine).
+
+Subagent branches are serialized at spawn time (name allocation + worktree
+creation), so concurrent spawns cannot collide. On parent session shutdown all
+running subagents are aborted and cleaned up.
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `index.ts` | Extension entry point: registers the command, tools, and session hooks |
 | `commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
-| `vm.ts` | VM lifecycle: launch, replace, close |
+| `vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
+| `subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, results, shutdown |
 | `config.ts` | Guest layout, git identity, limits, session entry type |
 | `branch-name.ts` | Prompt → branch name summarizer and sanitizer |
 | `guest-path.ts` | Host path → guest path mapping |
@@ -98,6 +126,8 @@ deterministic name derived from the first words of the prompt.
 
 - The sandbox is **per session**: each pi session runs its own extension instance and its
   own VM, so you can work on multiple branches in parallel across sessions. Launching a
-  different branch *within the same session* replaces that session's VM.
+  different branch *within the same session* replaces that session's VM. Subagents are the
+  same idea *within* one session: each gets its own detached VM and branch, running in the
+  background next to the parent's VM.
 - Everything in the guest except the git repository is ephemeral — the agent is told this
-  and must commit its work to its branch.
+  and must commit its work to its branch (subagents too; their branches outlive their VMs).

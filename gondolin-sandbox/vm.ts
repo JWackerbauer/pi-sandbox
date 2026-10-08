@@ -12,6 +12,107 @@ import {
   PREPARE_SCRIPT,
 } from "./config";
 
+export interface DetachedVmOptions {
+  localCwd: string;
+  localGitDir: string;
+  /** Ref the new work branch is created from. Default: the repo HEAD. */
+  branchStart?: string;
+}
+
+// Create a standalone VM for the given work branch: mounts the shared .git,
+// installs the prepare script and git hook, and runs prepare.sh. On failure
+// the half-configured VM is closed and the error is rethrown.
+//
+// Independent of any GondolinSandbox singleton, so several VMs can run at
+// the same time (one per branch/worktree). The caller owns the returned VM.
+export async function launchDetachedVm(
+  branch: string,
+  opts: DetachedVmOptions,
+): Promise<VM> {
+  const { localCwd, localGitDir, branchStart } = opts;
+  const created = await VM.create({
+    sandbox: {
+      imagePath: "./gondolin-sandbox/image-assets",
+    },
+    vfs: {
+      mounts: {
+        [GUEST_GIT_DIR]: new RealFSProvider(localGitDir),
+      },
+    },
+  });
+
+  try {
+    // Install the prepare script and the git hook into the guest.
+    const moduleRoot = path.resolve(__dirname);
+    await created.fs.writeFile(
+      PREPARE_SCRIPT,
+      fs.readFileSync(path.join(moduleRoot, "scripts", "prepare.sh")),
+    );
+    await created.fs.mkdir(GIT_HOOKS_DIR, { recursive: true });
+    await created.fs.writeFile(
+      path.join(GIT_HOOKS_DIR, "prepare-commit-msg"),
+      fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg")),
+    );
+
+    // `branch` and `branchStart` are sanitized branch names ([a-z0-9-] only)
+    // or commit hashes, so they are safe to interpolate into the shell
+    // command. String form runs in /bin/sh -lc "..."
+    const startExport = branchStart
+      ? `export WORK_BRANCH_START='${branchStart}' &&\\`
+      : "";
+    const result = await created.exec(`
+        export GIT_EMAIL='${GIT_EMAIL}' &&\\
+        export GIT_NAME='${GIT_NAME}' &&\\
+        export WORK_BRANCH_NAME='${branch}' &&\\
+        ${startExport}
+        export GUEST_GIT_DIR='${GUEST_GIT_DIR}' &&\\
+        export GUEST_WORKSPACE='${guestWorkspace(branch)}' &&\\
+        export GIT_HOOKS_DIR='${GIT_HOOKS_DIR}' &&\\
+          chmod +x ${PREPARE_SCRIPT} && ${PREPARE_SCRIPT}
+      `);
+
+    if (result.exitCode !== 0) {
+      const detail =
+        [result.stdout.trim(), result.stderr.trim()]
+          .filter((d) => d.length > 0)
+          .join("\n") || "(no output)";
+      throw new Error(
+        `gondolin: prepare.sh failed with exit code ${result.exitCode}\n${detail}`,
+      );
+    }
+    return created;
+  } catch (err) {
+    // Tear down the half-configured VM so a retry starts clean, then
+    // surface the failure to the caller.
+    try {
+      await created.close();
+    } catch {
+      // ignore: the VM is unusable anyway
+    }
+    throw err;
+  }
+}
+
+// Remove a detached VM's worktree (and its shared .git registration),
+// targeting only that branch's guest path. Best-effort: a crash before this
+// runs leaves a stale registration that prepare.sh detects at the next start.
+export async function removeDetachedWorktree(
+  vm: VM,
+  branch: string,
+): Promise<void> {
+  const ws = guestWorkspace(branch);
+  try {
+    await vm.exec([
+      "/bin/sh",
+      "-lc",
+      `git -C ${GUEST_GIT_DIR} worktree remove --force ${ws}`,
+    ]);
+  } catch {
+    // Best effort: a leftover registration is detected by prepare.sh at the
+    // next start, which tells the user to prune it manually.
+  }
+}
+
 export interface GondolinSandbox {
   /** The running VM, if any. */
   readonly vm: VM | null;
@@ -51,60 +152,10 @@ export function createSandbox(
   ): Promise<VM> {
     try {
       setStatus(ctx, "starting…");
-
-      const created = await VM.create({
-        sandbox: {
-          imagePath: "./gondolin-sandbox/image-assets",
-        },
-        vfs: {
-          mounts: {
-            [GUEST_GIT_DIR]: new RealFSProvider(localGitDir),
-          },
-        },
+      const created = await launchDetachedVm(requested, {
+        localCwd,
+        localGitDir,
       });
-
-      // Install the prepare script and the git hook into the guest.
-      const moduleRoot = path.resolve(__dirname);
-      await created.fs.writeFile(
-        PREPARE_SCRIPT,
-        fs.readFileSync(path.join(moduleRoot, "scripts", "prepare.sh")),
-      );
-      await created.fs.mkdir(GIT_HOOKS_DIR, { recursive: true });
-      await created.fs.writeFile(
-        path.join(GIT_HOOKS_DIR, "prepare-commit-msg"),
-        fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg")),
-      );
-
-      // `requested` is a sanitized branch name ([a-z0-9-] only), so it is
-      // safe to interpolate into the shell command. String form runs in
-      // /bin/sh -lc "..."
-      const result = await created.exec(`
-        export GIT_EMAIL='${GIT_EMAIL}' &&\\
-        export GIT_NAME='${GIT_NAME}' &&\\
-        export WORK_BRANCH_NAME='${requested}' &&\\
-        export GUEST_GIT_DIR='${GUEST_GIT_DIR}' &&\\
-        export GUEST_WORKSPACE='${guestWorkspace(requested)}' &&\\
-        export GIT_HOOKS_DIR='${GIT_HOOKS_DIR}' &&\\
-          chmod +x ${PREPARE_SCRIPT} && ${PREPARE_SCRIPT}
-      `);
-
-      if (result.exitCode !== 0) {
-        // Tear down the half-configured VM so a retry starts clean,
-        // then surface the failure to the caller.
-        try {
-          await created.close();
-        } catch {
-          // ignore: the VM is unusable anyway
-        }
-        const detail =
-          [result.stdout.trim(), result.stderr.trim()]
-            .filter((d) => d.length > 0)
-            .join("\n") || "(no output)";
-        throw new Error(
-          `gondolin: prepare.sh failed with exit code ${result.exitCode}\n${detail}`,
-        );
-      }
-
       vm = created;
       branch = requested;
       setStatus(ctx, requested);
@@ -157,17 +208,7 @@ export function createSandbox(
   // are already in the shared .git, so a dirty worktree is fine to drop.
   async function removeWorktree(): Promise<void> {
     if (!vm || !branch) return;
-    const ws = guestWorkspace(branch);
-    try {
-      await vm.exec([
-        "/bin/sh",
-        "-lc",
-        `git -C ${GUEST_GIT_DIR} worktree remove --force ${ws}`,
-      ]);
-    } catch {
-      // Best effort: a leftover registration is detected by prepare.sh at the
-      // next start, which tells the user to prune it manually.
-    }
+    await removeDetachedWorktree(vm, branch);
   }
 
   async function close(): Promise<void> {

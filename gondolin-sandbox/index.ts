@@ -1,5 +1,6 @@
 import type {
   ExtensionAPI,
+  ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -7,7 +8,9 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
+  defineTool,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
 import {
   DEFAULT_WORK_BRANCH,
   SANDBOX_ENTRY_TYPE,
@@ -15,6 +18,7 @@ import {
 } from "./config";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
+import { createSubagentManager } from "./subagents";
 import { createGondolinReadOps } from "./ops/read";
 import { createGondolinWriteOps } from "./ops/write";
 import { createGondolinEditOps } from "./ops/edit";
@@ -31,6 +35,35 @@ export default function (pi: ExtensionAPI) {
 
   const sandbox = createSandbox(localCwd, localGitDir);
 
+  // Latest ExtensionContext seen by a hook or tool, used to refresh the
+  // status bar from background subagent state changes.
+  let lastCtx: ExtensionContext | undefined;
+  let shuttingDown = false;
+  function touch(ctx: ExtensionContext): void {
+    lastCtx = ctx;
+  }
+  function updateStatus(ctx: ExtensionContext | undefined): void {
+    if (!ctx || shuttingDown) return;
+    const running = subagents.runningCount();
+    const parts = [`gondolin: ${sandbox.branch ?? "stopped"}`];
+    if (running > 0) {
+      parts.push(`${running} subagent${running > 1 ? "s" : ""} running`);
+    }
+    ctx.ui.setStatus(
+      "gondolin",
+      ctx.ui.theme.fg("accent", parts.join(" \u00b7 ")),
+    );
+  }
+
+  // Detached subagent sessions: each gets its own VM and work branch, runs
+  // in the background, and is collected via the subagent_results tool.
+  const subagents = createSubagentManager({
+    localCwd,
+    localGitDir,
+    parentBranch: () => sandbox.branch ?? DEFAULT_WORK_BRANCH,
+    onStatusChange: () => updateStatus(lastCtx),
+  });
+
   // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
   // and starts the first turn with the user's prompt.
   registerBuildCommand(pi, sandbox);
@@ -39,6 +72,7 @@ export default function (pi: ExtensionAPI) {
   // started, resumed, reloaded, or forked. /build-in-sandbox persists the
   // work branch as a custom entry.
   pi.on("session_start", async (_event, ctx) => {
+    touch(ctx);
     const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
     if (branch) {
       await sandbox.launch(branch, ctx);
@@ -48,11 +82,14 @@ export default function (pi: ExtensionAPI) {
   // The VM is started lazily: by /build-in-sandbox (with the generated
   // branch) or by the first tool call that needs it (default branch).
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (!sandbox.vm) return;
+    shuttingDown = true;
     ctx.ui.setStatus(
       "gondolin",
       ctx.ui.theme.fg("muted", "gondolin: stopping"),
     );
+    // Abort background subagents first: each cleans up its own worktree
+    // and VM while the guests are still up.
+    await subagents.shutdown();
     // Remove this session's worktree (selective) while the guest still has it,
     // so its shared .git registration is cleaned up. A crash skips this; the
     // next start detects the leftover in prepare.sh and asks the user to
@@ -65,6 +102,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     ...localRead,
     async execute(id, params, signal, onUpdate, ctx) {
+      touch(ctx);
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createReadTool(localCwd, {
         operations: createGondolinReadOps(activeVm, localCwd, sandbox.workspace!),
@@ -76,6 +114,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     ...localWrite,
     async execute(id, params, signal, onUpdate, ctx) {
+      touch(ctx);
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createWriteTool(localCwd, {
         operations: createGondolinWriteOps(activeVm, localCwd, sandbox.workspace!),
@@ -87,6 +126,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     ...localEdit,
     async execute(id, params, signal, onUpdate, ctx) {
+      touch(ctx);
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createEditTool(localCwd, {
         operations: createGondolinEditOps(activeVm, localCwd, sandbox.workspace!),
@@ -98,6 +138,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     ...localBash,
     async execute(id, params, signal, onUpdate, ctx) {
+      touch(ctx);
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createBashTool(localCwd, {
         operations: createGondolinBashOps(activeVm, localCwd, sandbox.workspace!),
@@ -105,6 +146,103 @@ export default function (pi: ExtensionAPI) {
       return tool.execute(id, params, signal, onUpdate);
     },
   });
+
+  // Spawn a detached sandbox session for a subagent. Same interface as
+  // /build-in-sandbox: the prompt is summarized into a branch name, a
+  // detached VM is launched for that branch (based on the parent's
+  // branch), and a background agent session works on the prompt. This tool
+  // returns as soon as the VM is up; the subagent keeps running while the
+  // parent continues its own work.
+  pi.registerTool(
+    defineTool({
+      name: "spawn_subagent",
+      label: "Spawn subagent",
+      promptSnippet:
+        "spawn_subagent: spawn a background subagent in its own detached " +
+        "sandbox session (own VM + work branch based on yours)",
+      description:
+        "Spawn a subagent in its own detached sandbox session. The subagent " +
+        "gets its own VM and a fresh work branch created from your current " +
+        "branch, and works on the given task in the background while you " +
+        "continue. You can spawn several subagents and let them run in " +
+        "parallel. Use subagent_results to wait for a subagent to finish and " +
+        "get its summary and commits, then review its branch and merge it " +
+        "into yours with git merge if the work is good.",
+      parameters: Type.Object({
+        prompt: Type.String({
+          description: "What the subagent should build or do",
+        }),
+      }),
+      execute: async (_id, params, _signal, _onUpdate, ctx) => {
+        touch(ctx);
+        if (params.prompt.trim().length === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "gondolin: spawn_subagent requires a non-empty prompt",
+              },
+            ],
+            details: {},
+            isError: true,
+          };
+        }
+        try {
+          const rec = await subagents.spawn(params.prompt, ctx);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  `Subagent ${rec.id} is running on branch ${rec.branch} ` +
+                  `(created from ${rec.branchStart}). ` +
+                  `Continue your work or spawn more subagents; call ` +
+                  `subagent_results to wait for it to finish and get its ` +
+                  `summary and commits.`,
+              },
+            ],
+            details: { id: rec.id, branch: rec.branch },
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: "text" as const, text: `gondolin: ${message}` }],
+            details: {},
+            isError: true,
+          };
+        }
+      },
+    }),
+  );
+
+  // Collect subagent results. Returns the results of finished subagents
+  // (summary + commits) and the status of running ones. Blocks until at
+  // least one running subagent finishes, so the agent can "stop and wait".
+  pi.registerTool(
+    defineTool({
+      name: "subagent_results",
+      label: "Subagent results",
+      promptSnippet:
+        "subagent_results: get the status and results of spawned subagents " +
+        "(waits until one finishes)",
+      description:
+        "Check subagent status. Returns the results of finished subagents " +
+        "(final summary and commit list) and the status of running ones. " +
+        "If subagents are still running and none has finished yet, this " +
+        "blocks until at least one finishes. Optionally pass an id to wait " +
+        "for a specific subagent only.",
+      parameters: Type.Object({
+        id: Type.Optional(
+          Type.String({ description: "Only wait for this subagent id" }),
+        ),
+      }),
+      execute: async (_id, params, signal, _onUpdate, ctx) => {
+        touch(ctx);
+        const text = await subagents.results(params.id, signal);
+        return { content: [{ type: "text" as const, text }], details: {} };
+      },
+    }),
+  );
 
   // Run user `!` commands inside the VM too
   pi.on("user_bash", (_event, _ctx) => {
@@ -115,6 +253,7 @@ export default function (pi: ExtensionAPI) {
   // Replace the CWD section in the system prompt so the model sees /workspace
   // and knows that only the git repository is persistent.
   pi.on("before_agent_start", async (event, ctx) => {
+    touch(ctx);
     await sandbox.ensureVm(ctx);
     event.systemPromptOptions.sections.cwd =
       `You are working in a gondolin sandbox; cwd: ${sandbox.workspace} (a git worktree owned by you, branch: ` +
@@ -122,7 +261,10 @@ export default function (pi: ExtensionAPI) {
       `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
       `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
       `The shared git repository is the ONLY persistence in the sandbox; the rest of the filesystem is ephemeral. ` +
-      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.`;
+      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
+      `You can delegate work to subagents with the spawn_subagent tool: each runs in its own detached sandbox session ` +
+      `on a fresh branch created from your branch, in the background. Collect their work with subagent_results, ` +
+      `review the branch, and merge it into your branch with git merge if the work is good.`;
   });
 }
 

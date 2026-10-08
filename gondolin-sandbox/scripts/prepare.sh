@@ -31,6 +31,8 @@ fi
 if git show-ref --verify --quiet "refs/heads/$WORK_BRANCH_NAME"; then
     git worktree add "$GUEST_WORKSPACE" "$WORK_BRANCH_NAME"
 else
-    git worktree add -b "$WORK_BRANCH_NAME" "$GUEST_WORKSPACE"
+    # Optional start point (WORK_BRANCH_START): creates the branch from the
+    # given ref (e.g. the parent agent's work branch) instead of the repo HEAD.
+    git worktree add -b "$WORK_BRANCH_NAME" "$GUEST_WORKSPACE" ${WORK_BRANCH_START:-}
 fi
 chmod +x "$GIT_HOOKS_DIR"/prepare-commit-msg
