@@ -92,6 +92,8 @@ deterministic name derived from the first words of the prompt.
 
 ## Notes
 
-- Launching a VM for a *different* branch replaces any running VM.
+- The sandbox is **per session**: each pi session runs its own extension instance and its
+  own VM, so you can work on multiple branches in parallel across sessions. Launching a
+  different branch *within the same session* replaces that session's VM.
 - Everything in the guest except the git repository is ephemeral — the agent is told this
   and must commit its work to its branch.
