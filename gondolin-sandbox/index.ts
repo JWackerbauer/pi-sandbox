@@ -53,6 +53,11 @@ export default function (pi: ExtensionAPI) {
       "gondolin",
       ctx.ui.theme.fg("muted", "gondolin: stopping"),
     );
+    // Remove this session's worktree (selective) while the guest still has it,
+    // so its shared .git registration is cleaned up. A crash skips this; the
+    // next start detects the leftover in prepare.sh and asks the user to
+    // prune it manually.
+    await sandbox.removeWorktree();
     await sandbox.close();
     ctx.ui.setStatus("gondolin", undefined);
   });

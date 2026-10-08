@@ -20,6 +20,12 @@ export interface GondolinSandbox {
   /** The guest workspace of the running VM, if any. */
   readonly workspace: string | null;
   /**
+   * Remove this VM's worktree (and its shared .git registration), targeting
+   * only this session's branch path. Best-effort: a crash before this runs
+   * leaves a stale registration that prepare.sh detects at the next start.
+   */
+  removeWorktree: () => Promise<void>;
+  /**
    * Launch the VM for the given work branch. If a VM is already running
    * for that branch it is returned; a VM running for a different branch
    * is closed and replaced.
@@ -145,6 +151,25 @@ export function createSandbox(
     return launch(DEFAULT_WORK_BRANCH, ctx);
   }
 
+  // Selective worktree removal for this session's branch only. Runs in the
+  // guest (where the worktree path exists) and targets the exact path, so it
+  // never touches other sessions' worktrees. --force: the branch's commits
+  // are already in the shared .git, so a dirty worktree is fine to drop.
+  async function removeWorktree(): Promise<void> {
+    if (!vm || !branch) return;
+    const ws = guestWorkspace(branch);
+    try {
+      await vm.exec([
+        "/bin/sh",
+        "-lc",
+        `git -C ${GUEST_GIT_DIR} worktree remove --force ${ws}`,
+      ]);
+    } catch {
+      // Best effort: a leftover registration is detected by prepare.sh at the
+      // next start, which tells the user to prune it manually.
+    }
+  }
+
   async function close(): Promise<void> {
     if (!vm) return;
     try {
@@ -158,6 +183,7 @@ export function createSandbox(
   return {
     launch,
     ensureVm,
+    removeWorktree,
     close,
     get vm() {
       return vm;
