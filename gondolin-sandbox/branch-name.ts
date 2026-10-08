@@ -42,9 +42,10 @@ export async function requestBranchName(
       "only, no explanation, no quotes.",
     messages: [userMessage],
   };
+  // No `reasoning` option: streamSimple defaults to thinking "off", so
+  // the whole maxTokens budget is available for the answer.
   const stream = registry.streamSimple(model, context, {
     maxTokens: SUMMARY_MAX_TOKENS,
-    reasoning: "minimal",
   });
   const result: AssistantMessage = await stream.result();
   const text = result.content
