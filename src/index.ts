@@ -406,7 +406,8 @@ export default function (pi: ExtensionAPI) {
       `The shared git repository is the ONLY persistent storage in your workspace; the rest of the filesystem is ephemeral. ` +
       `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
       (scratchEnabled
-        ? `Two scratch directories also persist across VM restarts (they live on the host, not in git): ` +
+        ? `Two scratch directories persist across VM restarts (they live on the host's temp filesystem, not in git, so they stick around ` +
+          `for a while but not forever - do not treat them as permanent storage): ` +
           `${GUEST_SCRATCH} is shared with every other session of this repository, so use it only for things that are ` +
           `universally useful to all of them (e.g. shared caches or downloaded artifacts); ` +
           `${GUEST_SCRATCH_LOCAL} is private to your branch and can hold anything else (build outputs, temporary data).\n`
