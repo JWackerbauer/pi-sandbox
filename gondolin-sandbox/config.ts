@@ -9,6 +9,11 @@ export const GUEST_GIT_DIR = "/source/.git";
 export const GIT_HOOKS_DIR = "/root/.git/hooks";
 export const PREPARE_SCRIPT = "/prepare.sh";
 
+// Prefix for session names of sandbox sessions, so they are recognizable
+// in the /resume menu. The work branch itself is persisted separately
+// (SANDBOX_ENTRY_TYPE), so the prefix is purely cosmetic.
+export const SESSION_NAME_PREFIX = "gondolin: ";
+
 // Custom session entry type persisting the sandbox work branch, so a
 // resumed session can bring the sandbox back up.
 export const SANDBOX_ENTRY_TYPE = "gondolin.sandbox";
