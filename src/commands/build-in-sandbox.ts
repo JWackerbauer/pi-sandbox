@@ -3,7 +3,7 @@ import { requestBranchName } from "../branch-name";
 import { SANDBOX_ENTRY_TYPE, SESSION_NAME_PREFIX } from "../config";
 import type { GondolinSandbox } from "../vm";
 
-// /build-in-sandbox <prompt>
+// /build-in-sandbox [prompt]
 //
 // Summarizes the prompt into a branch name with the current model,
 // names the session after it, launches the sandbox VM for that branch,
@@ -17,13 +17,15 @@ export function registerBuildCommand(
       "Build in the sandbox: summarize the idea into a branch name, " +
       "start the VM, and begin working on it",
     handler: async (args, ctx) => {
-      const prompt = args.trim();
+      let prompt = args.trim();
       if (prompt.length === 0) {
-        ctx.ui.notify(
-          "Usage: /build-in-sandbox <what do you want to build?>",
-          "error",
-        );
-        return;
+        const entered = await ctx.ui.input("What do you want to build?");
+        if (entered === undefined) return; // user cancelled the dialog
+        prompt = entered.trim();
+        if (prompt.length === 0) {
+          ctx.ui.notify("gondolin: nothing to build — no prompt given", "warning");
+          return;
+        }
       }
 
       const model = ctx.model;
