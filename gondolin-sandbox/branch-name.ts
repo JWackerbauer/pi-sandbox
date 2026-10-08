@@ -21,7 +21,10 @@ export function toBranchName(raw: string): string {
 }
 
 // Ask the given model for a short summary of a build request and
-// sanitize the answer into a branch name.
+// sanitize the answer into a branch name. When the model returns no
+// usable text (e.g. the token budget was consumed by thinking), fall
+// back to a deterministic name derived from the first words of the
+// prompt, so the branch always reflects the request.
 export async function requestBranchName(
   model: Model<any>,
   registry: ExtensionContext["modelRegistry"],
@@ -49,5 +52,6 @@ export async function requestBranchName(
     .map((block) => block.text)
     .join(" ")
     .trim();
-  return toBranchName(text);
+  const fromModel = toBranchName(text);
+  return fromModel.length > 0 ? fromModel : toBranchName(prompt);
 }

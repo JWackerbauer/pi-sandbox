@@ -48,9 +48,11 @@ export function registerBuildCommand(
         ctx.modelRegistry,
         prompt,
       );
-      pi.setSessionName(branch);
 
       await sandbox.launch(branch, ctx);
+      // Only rename and persist after a successful launch, so a failed
+      // start does not leave the session misnamed or marked as sandboxed.
+      pi.setSessionName(branch);
       // Persist the branch so /resume (and /reload) can relaunch the
       // sandbox for it. Custom entries are not sent to the LLM.
       pi.appendEntry(SANDBOX_ENTRY_TYPE, { branch });

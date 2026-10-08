@@ -9,5 +9,9 @@ git config --global --add safe.directory "$GUEST_GIT_DIR"
 git config --global --add safe.directory "$GUEST_WORKSPACE"
 git config --global core.hooksPath "$GIT_HOOKS_DIR"
 git worktree prune
-git worktree add "$GUEST_WORKSPACE" "$WORK_BRANCH_NAME"
+if git show-ref --verify --quiet "refs/heads/$WORK_BRANCH_NAME"; then
+    git worktree add "$GUEST_WORKSPACE" "$WORK_BRANCH_NAME"
+else
+    git worktree add -b "$WORK_BRANCH_NAME" "$GUEST_WORKSPACE"
+fi
 chmod +x "$GIT_HOOKS_DIR"/prepare-commit-msg

@@ -21,7 +21,7 @@ export interface SandboxEntryData {
 export const DEFAULT_WORK_BRANCH = "gondolin-test";
 
 // Limits for the branch-name summarizer model call.
-export const SUMMARY_MAX_TOKENS = 24;
+export const SUMMARY_MAX_TOKENS = 64;
 export const BRANCH_NAME_MAX_LENGTH = 40;
 
 // Git identity for commits made inside the guest (attributed to the operator,
