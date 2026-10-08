@@ -91,9 +91,10 @@ export async function launchDetachedVm(
     mounts[GUEST_SCRATCH_LOCAL] = new RealFSProvider(hostBranch);
   }
 
+  const moduleRoot = path.resolve(__dirname);
   const created = await VM.create({
     sandbox: {
-      imagePath: "./gondolin-sandbox/image-assets",
+      imagePath: `${moduleRoot}/../image/assets`,
     },
     memory: sizing.memory,
     cpus: sizing.cpus,
@@ -106,7 +107,6 @@ export async function launchDetachedVm(
 
   try {
     // Install the prepare script and the git hook into the guest.
-    const moduleRoot = path.resolve(__dirname);
     await created.fs.writeFile(
       PREPARE_SCRIPT,
       fs.readFileSync(path.join(moduleRoot, "scripts", "prepare.sh")),
