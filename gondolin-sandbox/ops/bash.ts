@@ -2,13 +2,13 @@ import type { VM } from "@earendil-works/gondolin";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { toGuestPath } from "../guest-path";
 
-export function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
+export function createGondolinBashOps(vm: VM, localCwd: string, guestWs: string): BashOperations {
   // The host environment passed by pi is intentionally not forwarded: it
   // usually contains API keys and other credentials.  Configure secrets for
   // the guest with `httpHooks` (see docs/secrets.md) instead.
   return {
     exec: async (command, cwd, { onData, signal, timeout }) => {
-      const guestCwd = toGuestPath(localCwd, cwd);
+      const guestCwd = toGuestPath(localCwd, cwd, guestWs);
 
       const ac = new AbortController();
       const onAbort = () => ac.abort();

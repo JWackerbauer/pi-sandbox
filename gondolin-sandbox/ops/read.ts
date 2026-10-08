@@ -4,16 +4,16 @@ import type { VM } from "@earendil-works/gondolin";
 import type { ReadOperations } from "@earendil-works/pi-coding-agent";
 import { shQuote, toGuestPath } from "../guest-path";
 
-export function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
+export function createGondolinReadOps(vm: VM, localCwd: string, guestWs: string): ReadOperations {
   return {
     readFile: async (p) => {
-      return vm.fs.readFile(toGuestPath(localCwd, p));
+      return vm.fs.readFile(toGuestPath(localCwd, p, guestWs));
     },
     access: async (p) => {
-      await vm.fs.access(toGuestPath(localCwd, p), { mode: fsConstants.R_OK });
+      await vm.fs.access(toGuestPath(localCwd, p, guestWs), { mode: fsConstants.R_OK });
     },
     detectImageMimeType: async (p) => {
-      const guestPath = toGuestPath(localCwd, p);
+      const guestPath = toGuestPath(localCwd, p, guestWs);
       try {
         // Run through the shell because `file` might live in `/usr/bin` depending on the image
         const r = await vm.exec([

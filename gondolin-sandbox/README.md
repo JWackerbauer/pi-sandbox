@@ -2,8 +2,9 @@
 
 Runs pi's agent tools inside a lightweight [Gondolin](https://github.com/obra/gondolin) VM
 (aarch64 Alpine guest on macOS), while the pi session itself stays on your host. The agent
-believes it is working in `/workspace`; only the shared git repository is persistent, and
-the agent works on its own work branch that you review and merge on the host.
+believes it is working in its own per-branch workspace (e.g. `/my-branch`); only the
+shared git repository is persistent, and the agent works on its own work branch that you
+review and merge on the host.
 
 ## Quick start
 
@@ -15,7 +16,7 @@ Inside a git repository, start a sandbox build:
 
 This:
 1. Summarizes your prompt into a kebab-case branch name using the current model.
-2. Launches the Gondolin VM and checks out that branch as a git worktree at `/workspace` in the guest.
+2. Launches the Gondolin VM and checks out that branch as a git worktree at `/<branch>` in the guest.
 3. Renames the session to `gondolin: <branch>` (so it's recognizable in `/resume`).
 4. Persists the branch in the session and starts the first agent turn with your prompt.
 
@@ -48,8 +49,8 @@ pi '/build-in-sandbox <what do you want to build?>'
 `index.ts` re-registers the four built-in tools (`read`, `write`, `edit`, `bash`) with
 wrappers that transparently route their file operations into the guest:
 
-- File paths are mapped from the host cwd into `/workspace` (`guest-path.ts`); paths
-  escaping the workspace are rejected.
+- File paths are mapped from the host cwd into the guest workspace `/<branch>`
+  (`guest-path.ts`); paths escaping the workspace are rejected.
 - `bash` (including user `!` commands) runs as `/bin/bash -lc` **inside the guest**. The
   host environment is deliberately not forwarded — it usually contains API keys. Give the
   guest what it needs via Gondolin's `httpHooks` instead.
@@ -62,6 +63,9 @@ persistent, and that it must commit to its branch and ask the user to review & m
 
 ### Sessions
 
+- The guest workspace is `/<branch>`: the host's `.git` is shared by all sandbox
+  guests and git identifies worktrees by path, so the path must be unique per branch
+  to avoid clobbering other sessions' worktrees.
 - The work branch is stored as a custom session entry (`gondolin.sandbox`) — custom
   entries are not sent to the LLM.
 - On `session_start` (resume, reload, fork), the extension reads that entry and relaunches

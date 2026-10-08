@@ -1,10 +1,17 @@
 // Sandbox configuration: fixed guest layout and git identity.
 //
 // The guest mounts the host's .git at GUEST_GIT_DIR and checks out a work
-// branch as a worktree at GUEST_WORKSPACE. The agent works in GUEST_WORKSPACE;
-// review/merge back to the main branch happens on the host.
+// branch as a worktree at its per-branch guest workspace. The agent works
+// in that workspace; review/merge back to the main branch happens on the
+// host.
 
-export const GUEST_WORKSPACE = "/workspace";
+// The guest's worktree path for a work branch. The host's .git is shared by
+// all sandbox guests, and git identifies worktrees by path, so the guest
+// workspace must be unique per branch. Branch names are sanitized to
+// [a-z0-9-] (see branch-name.ts), so this is a safe absolute path.
+export function guestWorkspace(branch: string): string {
+  return `/${branch}`;
+}
 export const GUEST_GIT_DIR = "/source/.git";
 export const GIT_HOOKS_DIR = "/root/.git/hooks";
 export const PREPARE_SCRIPT = "/prepare.sh";

@@ -4,7 +4,7 @@ import { VM, RealFSProvider } from "@earendil-works/gondolin";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   DEFAULT_WORK_BRANCH,
-  GUEST_WORKSPACE,
+  guestWorkspace,
   GUEST_GIT_DIR,
   GIT_EMAIL,
   GIT_HOOKS_DIR,
@@ -17,6 +17,8 @@ export interface GondolinSandbox {
   readonly vm: VM | null;
   /** The work branch of the running VM, if any. */
   readonly branch: string | null;
+  /** The guest workspace of the running VM, if any. */
+  readonly workspace: string | null;
   /**
    * Launch the VM for the given work branch. If a VM is already running
    * for that branch it is returned; a VM running for a different branch
@@ -75,7 +77,7 @@ export function createSandbox(
         export GIT_NAME='${GIT_NAME}' &&\\
         export WORK_BRANCH_NAME='${requested}' &&\\
         export GUEST_GIT_DIR='${GUEST_GIT_DIR}' &&\\
-        export GUEST_WORKSPACE='${GUEST_WORKSPACE}' &&\\
+        export GUEST_WORKSPACE='${guestWorkspace(requested)}' &&\\
         export GIT_HOOKS_DIR='${GIT_HOOKS_DIR}' &&\\
           chmod +x ${PREPARE_SCRIPT} && ${PREPARE_SCRIPT}
       `);
@@ -101,7 +103,7 @@ export function createSandbox(
       branch = requested;
       setStatus(ctx, requested);
       ctx?.ui.notify(`
-        Gondolin VM ready. Branch ${requested} of ${localCwd} created at ${GUEST_WORKSPACE}`,
+        Gondolin VM ready. Branch ${requested} of ${localCwd} created at ${guestWorkspace(requested)}`,
         "info",
       );
       return created;
@@ -162,6 +164,9 @@ export function createSandbox(
     },
     get branch() {
       return branch;
+    },
+    get workspace() {
+      return branch === null ? null : guestWorkspace(branch);
     },
   };
 }

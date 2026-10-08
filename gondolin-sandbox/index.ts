@@ -9,7 +9,6 @@ import {
   createWriteTool,
 } from "@earendil-works/pi-coding-agent";
 import {
-  GUEST_WORKSPACE,
   DEFAULT_WORK_BRANCH,
   SANDBOX_ENTRY_TYPE,
   type SandboxEntryData,
@@ -63,7 +62,7 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createReadTool(localCwd, {
-        operations: createGondolinReadOps(activeVm, localCwd),
+        operations: createGondolinReadOps(activeVm, localCwd, sandbox.workspace!),
       });
       return tool.execute(id, params, signal, onUpdate);
     },
@@ -74,7 +73,7 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createWriteTool(localCwd, {
-        operations: createGondolinWriteOps(activeVm, localCwd),
+        operations: createGondolinWriteOps(activeVm, localCwd, sandbox.workspace!),
       });
       return tool.execute(id, params, signal, onUpdate);
     },
@@ -85,7 +84,7 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createEditTool(localCwd, {
-        operations: createGondolinEditOps(activeVm, localCwd),
+        operations: createGondolinEditOps(activeVm, localCwd, sandbox.workspace!),
       });
       return tool.execute(id, params, signal, onUpdate);
     },
@@ -96,7 +95,7 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const activeVm = await sandbox.ensureVm(ctx);
       const tool = createBashTool(localCwd, {
-        operations: createGondolinBashOps(activeVm, localCwd),
+        operations: createGondolinBashOps(activeVm, localCwd, sandbox.workspace!),
       });
       return tool.execute(id, params, signal, onUpdate);
     },
@@ -104,8 +103,8 @@ export default function (pi: ExtensionAPI) {
 
   // Run user `!` commands inside the VM too
   pi.on("user_bash", (_event, _ctx) => {
-    if (!sandbox.vm) return;
-    return { operations: createGondolinBashOps(sandbox.vm, localCwd) };
+    if (!sandbox.vm || !sandbox.workspace) return;
+    return { operations: createGondolinBashOps(sandbox.vm, localCwd, sandbox.workspace) };
   });
 
   // Replace the CWD section in the system prompt so the model sees /workspace
@@ -113,7 +112,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     await sandbox.ensureVm(ctx);
     event.systemPromptOptions.sections.cwd =
-      `You are working in a gondolin sandbox; cwd: ${GUEST_WORKSPACE} (a git worktree owned by you, branch: ` +
+      `You are working in a gondolin sandbox; cwd: ${sandbox.workspace} (a git worktree owned by you, branch: ` +
       `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
       `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
       `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
