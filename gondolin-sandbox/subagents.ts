@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import {
   createAgentSession,
   createBashToolDefinition,
@@ -15,7 +16,12 @@ import {
 import type { Model } from "@earendil-works/pi-ai";
 import type { VM } from "@earendil-works/gondolin";
 import { requestDistinctBranchName } from "./branch-name";
-import { guestWorkspace } from "./config";
+import {
+  guestWorkspace,
+  SUBAGENT_LOOP_WINDOW,
+  SUBAGENT_RECENT_TOOL_WINDOW,
+  SUBAGENT_STUCK_IDLE_MS,
+} from "./config";
 import { createGondolinBashOps } from "./ops/bash";
 import { createGondolinEditOps } from "./ops/edit";
 import { createGondolinReadOps } from "./ops/read";
@@ -51,19 +57,24 @@ export interface SubagentManager {
    */
   spawn: (prompt: string, ctx: ExtensionContext) => Promise<SubagentRecord>;
   /**
-   * A text snapshot of all subagents. When `id` is given, only that
-   * subagent is considered. Blocks until at least one of the considered
-   * subagents has finished (unless results are already available or there
-   * are none), so the caller can use it to "stop and wait".
+   * A non-blocking text snapshot of all subagents (or just the one with the
+   * given `id`). Does not wait: spawned subagents report themselves when they
+   * finish, so there is no need to block. Each running subagent includes
+   * activity diagnostics (elapsed time, last activity, recent tool calls) and
+   * heuristics that flag a subagent that appears stuck or looping. When
+   * `deferSeconds` > 0, the tool returns immediately and the host is asked
+   * to deliver the status (recomputed when the timer fires) to the parent
+   * agent as a message after that delay — "check on it in N seconds".
    */
-  results: (id?: string, signal?: AbortSignal) => Promise<string>;
+  status: (id?: string, deferSeconds?: number) => string;
   /** Number of subagents still running. */
   runningCount: () => number;
   /** All subagents, in spawn order. */
   list: () => SubagentRecord[];
   /**
-   * Abort every running subagent and wait for its cleanup (session
-   * disposal, worktree removal, VM close). Called on session shutdown.
+   * Abort every running subagent, cancel any scheduled deferred status
+   * checks, and wait for cleanup (session disposal, worktree removal, VM
+   * close). Called on session shutdown.
    */
   shutdown: () => Promise<void>;
 }
@@ -74,9 +85,20 @@ interface InternalRecord extends SubagentRecord {
   settle: Promise<void>;
   /**
    * Set when the agent has fetched this record's settled result via
-   * `results()`, so the proactive settlement message is not sent twice.
+   * `status()`, so the proactive settlement message is not sent twice.
    */
   acknowledged: boolean;
+  // Activity tracking, updated from the subagent session's event stream, used
+  // by status() to surface stuck/looping subagents.
+  startedAt: number;
+  lastActivityAt: number;
+  toolCalls: number;
+  /** Fingerprints of the most recent tool calls, newest last. */
+  recentTools: string[];
+  /** Truncated text of the subagent's most recent assistant message. */
+  lastAssistantText?: string;
+  /** Cancels the session event subscription on cleanup. */
+  unsubscribe?: () => void;
 }
 
 export interface SubagentManagerOptions {
@@ -88,20 +110,35 @@ export interface SubagentManagerOptions {
   onStatusChange?: () => void;
   /**
    * Called once when a subagent settles (completed or failed), unless the
-   * agent has already fetched the result via `results()`. The host uses it
+   * agent has already fetched the result via `status()`. The host uses it
    * to proactively deliver the result to the parent agent.
    */
   onSettled?: (record: SubagentRecord) => void;
+  /**
+   * Called when a deferred status check (status with deferSeconds) fires,
+   * with the id filter and the freshly computed status text. The host uses
+   * it to deliver the status to the parent agent as a message.
+   */
+  onDeferredStatus?: (id: string | undefined, text: string) => void;
 }
 
 export function createSubagentManager(
   opts: SubagentManagerOptions,
 ): SubagentManager {
-  const { localCwd, localGitDir, parentBranch, onStatusChange, onSettled } = opts;
+  const {
+    localCwd,
+    localGitDir,
+    parentBranch,
+    onStatusChange,
+    onSettled,
+    onDeferredStatus,
+  } = opts;
 
   const records: InternalRecord[] = [];
   let counter = 0;
   let shuttingDown = false;
+  // Scheduled deferred status checks, so shutdown can cancel them.
+  const pendingDeferred = new Set<NodeJS.Timeout>();
 
   // Serialize the part of a spawn that touches the shared .git (branch name
   // allocation, start-point resolution, worktree creation) so concurrent
@@ -151,6 +188,7 @@ export function createSubagentManager(
       counter += 1;
       let resolveSettle: () => void;
       const settle = new Promise<void>((r) => (resolveSettle = r));
+      const now = Date.now();
       const record: InternalRecord = {
         id: `sub-${counter}`,
         branch,
@@ -161,6 +199,10 @@ export function createSubagentManager(
         session: null,
         settle,
         acknowledged: false,
+        startedAt: now,
+        lastActivityAt: now,
+        toolCalls: 0,
+        recentTools: [],
       };
       records.push(record);
       onStatusChange?.();
@@ -191,6 +233,7 @@ export function createSubagentManager(
       if (session) record.summary = session.getLastAssistantText() ?? "";
     } finally {
       if (session) session.dispose();
+      record.unsubscribe?.();
       try {
         record.commits = (
           await hostGit(["log", "--oneline", `${record.branchStart}..${record.branch}`])
@@ -266,40 +309,60 @@ export function createSubagentManager(
         }) as ToolDefinition,
       ],
     });
+
+    // Track the subagent's activity so status() can surface a subagent that
+    // appears stuck (no recent activity) or looping (repeating the same tool
+    // call). Push-based via the session event stream; no polling.
+    record.unsubscribe = session.subscribe((event) => {
+      record.lastActivityAt = Date.now();
+      if (event.type === "tool_execution_start") {
+        record.toolCalls += 1;
+        record.recentTools.push(fingerprint(event.toolName, event.args));
+        if (record.recentTools.length > SUBAGENT_RECENT_TOOL_WINDOW) {
+          record.recentTools.shift();
+        }
+      } else if (event.type === "message_end") {
+        const text = messageText(event.message);
+        if (text) record.lastAssistantText = text.slice(0, 300);
+      }
+    });
+
     return session;
   }
 
-  async function results(id?: string, signal?: AbortSignal): Promise<string> {
-    const relevant = () => records.filter((r) => !id || r.id === id);
+  // Non-blocking status snapshot. When `deferSeconds` > 0, returns an
+  // acknowledgement immediately and schedules a background check that
+  // delivers the status (recomputed when it fires) to the parent agent as a
+  // message — "check on it in N seconds" without blocking this turn.
+  function status(id?: string, deferSeconds?: number): string {
     if (id && !records.some((r) => r.id === id)) {
       return `No subagent with id ${id} exists. Known ids: ${
         records.map((r) => r.id).join(", ") || "(none)"
       }`;
     }
-    for (;;) {
-      const settled = relevant().filter((r) => r.status !== "running");
-      const running = relevant().filter((r) => r.status === "running");
-      if (settled.length > 0 || running.length === 0) {
-        // The agent now has these results; don't send the proactive
-        // settlement notice for them.
-        for (const r of settled) r.acknowledged = true;
-        return formatResults();
-      }
-      // The caller was aborted while subagents are still running: return
-      // the current snapshot instead of waiting (or spinning).
-      if (signal?.aborted) return formatResults();
-      // Nothing finished yet: wait until at least one running subagent
-      // settles (or the caller is aborted).
-      const aborted = new Promise<void>((resolve) => {
-        if (!signal) return; // no signal: wait indefinitely
-        if (signal.aborted) return resolve();
-        signal.addEventListener("abort", () => resolve(), { once: true });
-      });
-      await Promise.race([
-        Promise.allSettled(running.map((r) => r.settle)),
-        aborted,
-      ]);
+    const defer =
+      typeof deferSeconds === "number" && isFinite(deferSeconds) && deferSeconds > 0
+        ? deferSeconds
+        : 0;
+    if (defer > 0) {
+      scheduleDeferredStatus(id, defer);
+      return (
+        `Scheduled a subagent status check in ${fmtDuration(defer * 1000)} ` +
+        `(${id ? `subagent ${id}` : "all subagents"}). It will be delivered to ` +
+        `you as a message when it fires; you do not need to wait.`
+      );
     }
+    return formatStatus(id);
+  }
+
+  function scheduleDeferredStatus(id: string | undefined, seconds: number): void {
+    if (shuttingDown) return;
+    const handle = setTimeout(() => {
+      pendingDeferred.delete(handle);
+      if (shuttingDown) return;
+      onDeferredStatus?.(id, formatStatus(id));
+    }, seconds * 1000);
+    pendingDeferred.add(handle);
   }
 
   function runningCount(): number {
@@ -325,6 +388,10 @@ export function createSubagentManager(
 
   async function shutdown(): Promise<void> {
     shuttingDown = true;
+    // Cancel scheduled deferred status checks; they must not fire after the
+    // parent session is gone.
+    for (const handle of pendingDeferred) clearTimeout(handle);
+    pendingDeferred.clear();
     // Wait for an in-flight spawn (VM launch) to finish first, then abort
     // every running session; each run() cleans up its worktree and VM.
     await spawnChain;
@@ -364,28 +431,75 @@ export function createSubagentManager(
     });
   }
 
-  function formatResults(): string {
+  function formatStatus(id?: string): string {
     if (records.length === 0) {
       return "No subagents have been spawned. Use spawn_subagent to start one.";
     }
     const lines: string[] = ["Subagents:"];
     for (const r of records) {
-      for (const line of formatSubagentResult(r).split("\n")) lines.push(line);
+      if (id && r.id !== id) continue;
+      for (const line of describeRecord(r).split("\n")) lines.push(line);
     }
     lines.push(
       "",
-      "Review a finished branch with `git log <branch>` / `git diff <start>..<branch>`,",
-      "then merge it into your branch with `git merge <branch>` if the work is good.",
+      "Finished subagents report themselves when they are done. To check on a " +
+      "running subagent later without blocking, call subagent_status with " +
+      "defer_time (seconds) — the status is delivered to you as a message " +
+      "after the delay.",
     );
     return lines.join("\n");
   }
 
-  return { spawn, results, runningCount, list, shutdown };
+  // One subagent: full result when settled, activity diagnostics when running.
+  function describeRecord(r: InternalRecord): string {
+    if (r.status === "running") return describeRunning(r);
+    return formatSubagentResult(r);
+  }
+
+  function describeRunning(r: InternalRecord): string {
+    const now = Date.now();
+    const lines: string[] = [
+      `[${r.id}] branch: ${r.branch} — running`,
+      `  running for ${fmtDuration(now - r.startedAt)}; last activity ${
+        fmtDuration(now - r.lastActivityAt)
+      } ago`,
+      `  tool calls: ${r.toolCalls}`,
+    ];
+    const last = r.recentTools[r.recentTools.length - 1];
+    if (last) lines.push(`  last tool: ${last}`);
+    for (const hint of diagnose(r, now)) lines.push(`  ⚠ ${hint}`);
+    if (r.lastAssistantText) {
+      lines.push(`  last message: ${oneLine(r.lastAssistantText).slice(0, 160)}`);
+    }
+    return lines.join("\n");
+  }
+
+  // Heuristic problem signals for a running subagent. Both are soft hints, not
+  // verdicts: a long `bash` command can legitimately produce no activity for
+  // a while, and identical tool calls can be a legitimate retry loop.
+  function diagnose(r: InternalRecord, now: number): string[] {
+    const hints: string[] = [];
+    const idleMs = now - r.lastActivityAt;
+    if (idleMs > SUBAGENT_STUCK_IDLE_MS) {
+      hints.push(
+        `no activity for ${fmtDuration(idleMs)} — may be stuck on a long-running command`,
+      );
+    }
+    const window = r.recentTools.slice(-SUBAGENT_LOOP_WINDOW);
+    if (window.length >= SUBAGENT_LOOP_WINDOW && new Set(window).size === 1) {
+      hints.push(
+        `repeating the same action (${window.length}× ${window[0]}) — may be looping`,
+      );
+    }
+    return hints;
+  }
+
+  return { spawn, status, runningCount, list, shutdown };
 }
 
 // ─── Formatting ─────────────────────────────────────────────────────────
 
-// One subagent, in the same shape the agent sees in subagent_results.
+// One subagent, in the same shape the agent sees in subagent_status.
 export function formatSubagentResult(r: SubagentRecord): string {
   const lines: string[] = [
     `[${r.id}] branch: ${r.branch} — ${r.status === "failed" ? "FAILED" : r.status}`,
@@ -417,6 +531,54 @@ export function formatSettledNotice(r: SubagentRecord): string {
     "Review the branch (`git log` / `git diff start..branch`) and merge it " +
     "into your branch with `git merge <branch>` if the work is good."
   );
+}
+
+// ─── Activity tracking helpers ─────────────────────────────────────────
+
+// A short fingerprint of a tool call (name + args), used to detect a
+// subagent repeating the exact same action. Bounded to 16 hex chars.
+function fingerprint(toolName: string, args: unknown): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(args) ?? "";
+  } catch {
+    serialized = String(args);
+  }
+  const hash = crypto
+    .createHash("sha256")
+    .update(`${toolName}\u0000${serialized}`)
+    .digest("hex")
+    .slice(0, 16);
+  return `${toolName}#${hash}`;
+}
+
+// Best-effort extraction of the text content of an assistant message, from a
+// session event's message (shaped as AgentMessage, not imported here).
+function messageText(message: unknown): string {
+  const m = message as
+    | { content?: Array<{ type?: string; text?: string }> }
+    | undefined;
+  if (!m || !Array.isArray(m.content)) return "";
+  return m.content
+    .filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text)
+    .join(" ")
+    .trim();
+}
+
+// Human-friendly duration from milliseconds.
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+// Collapse whitespace/newlines to single spaces for one-line display.
+function oneLine(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
 }
 
 // ─── Subagent system prompt ─────────────────────────────────────────────

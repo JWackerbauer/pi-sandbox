@@ -32,6 +32,20 @@ export interface SandboxEntryData {
 // into the parent session when a subagent finishes.
 export const SUBAGENT_RESULT_TYPE = "gondolin.subagent-result";
 
+// Custom message type of a deferred subagent status check, queued into the
+// parent session when a scheduled status check (subagent_status with
+// defer_time) fires.
+export const SUBAGENT_STATUS_TYPE = "gondolin.subagent-status";
+
+// Tuning for subagent_status problem detection (see subagents.ts). A
+// running subagent with no activity for this long is flagged as "may be
+// stuck"; `SUBAGENT_LOOP_WINDOW` identical recent tool calls are flagged as
+// "may be looping".
+export const SUBAGENT_STUCK_IDLE_MS = 120_000;
+export const SUBAGENT_LOOP_WINDOW = 3;
+// How many recent tool-call fingerprints to retain for loop detection.
+export const SUBAGENT_RECENT_TOOL_WINDOW = 5;
+
 // Work branch used when the sandbox starts outside of /build-in-sandbox
 // (e.g. a tool needs a VM before the user has requested a build).
 export const DEFAULT_WORK_BRANCH = "gondolin-test";

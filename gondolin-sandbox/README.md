@@ -118,17 +118,29 @@ each running in its own **detached sandbox session**:
   extensions/skills) works on the prompt with its four tools routed into the new
   guest. The tool returns as soon as the VM is up — the parent keeps working and
   can spawn more subagents in parallel.
-- `subagent_results([id])` — returns the results of finished subagents (final
-  summary + `git log --oneline start..branch`) and the status of running ones.
-  If subagents are still running, it blocks until at least one finishes, so the
-  agent can "stop and wait".
+- `subagent_status([id], defer_time?)` — a **non-blocking** check on spawned
+  subagents. Returns each subagent's state; for running ones it includes
+  elapsed time, last activity, recent tool calls, and heuristics that flag a
+  subagent that appears **stuck** (no recent activity) or **looping**
+  (repeating the same action). It does *not* block: finished subagents report
+  themselves proactively, so this is for monitoring running ones. Passing
+  `defer_time` (seconds) schedules the check in the background — the tool
+  returns immediately and the status is delivered to the agent as a message
+  after the delay, so it can "dispatch a subagent and check on it in 5
+  minutes" without blocking the session.
 
 **Proactive delivery:** the agent does not have to poll. When a subagent
 finishes, the extension injects its result into the parent session as a custom
 message (`gondolin.subagent-result`) that triggers the agent's next turn —
 queued as a follow-up if the parent is mid-turn, immediate if idle. If the
-agent already fetched that result via `subagent_results`, the notice is
+agent already fetched that result via `subagent_status`, the notice is
 suppressed.
+
+**Deferred status checks:** `subagent_status` with `defer_time` schedules a
+background status check; when the timer fires, the extension injects the freshly
+computed status into the parent session as a custom message
+(`gondolin.subagent-status`) that triggers the agent's next turn. Pending
+delayed checks are cancelled on session shutdown.
 
 When a subagent finishes, its worktree is removed and its VM is closed, but the
 **branch stays** in the shared repository — that is the persistent artifact.
@@ -147,7 +159,7 @@ running subagents are aborted and cleaned up.
 | `index.ts` | Extension entry point: registers the command, tools, and session hooks |
 | `commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
 | `vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
-| `subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, results, shutdown |
+| `subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
 | `config.ts` | Guest layout, git identity, limits, session entry type, config contract |
 | `config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret resolution |
 | `branch-name.ts` | Prompt → branch name summarizer and sanitizer |

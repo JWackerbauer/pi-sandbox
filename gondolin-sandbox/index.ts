@@ -15,6 +15,7 @@ import {
   DEFAULT_WORK_BRANCH,
   SANDBOX_ENTRY_TYPE,
   SUBAGENT_RESULT_TYPE,
+  SUBAGENT_STATUS_TYPE,
   type SandboxEntryData,
 } from "./config";
 import { createSandbox } from "./vm";
@@ -57,7 +58,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   // Detached subagent sessions: each gets its own VM and work branch, runs
-  // in the background, and is collected via the subagent_results tool.
+  // in the background, and is checked via the subagent_status tool.
   // When a subagent settles, its result is proactively queued into this
   // session as a custom message that triggers the agent's next turn — the
   // agent does not have to poll for it.
@@ -79,6 +80,21 @@ export default function (pi: ExtensionAPI) {
           triggerTurn: true,
           // Mid-turn: queued as a follow-up that starts a new turn once the
           // current run finishes. Idle: appended and starts a turn now.
+          deliverAs: "followUp",
+        },
+      );
+    },
+    onDeferredStatus: (id, text) => {
+      if (shuttingDown) return;
+      pi.sendMessage(
+        {
+          customType: SUBAGENT_STATUS_TYPE,
+          content: text,
+          display: true,
+          details: { id },
+        },
+        {
+          triggerTurn: true,
           deliverAs: "followUp",
         },
       );
@@ -188,8 +204,9 @@ export default function (pi: ExtensionAPI) {
         "continue. You can spawn several subagents and let them run in " +
         "parallel. When a subagent finishes, its result (summary and " +
         "commits) is delivered to you proactively as a message on your next " +
-        "turn — you do not have to poll for it. Use subagent_results to " +
-        "check status, wait for a specific subagent, or re-fetch results. " +
+        "turn — you do not have to poll for it. Use subagent_status to " +
+        "check on a running subagent; pass defer_time (seconds) to schedule " +
+        "a status check that arrives as a message later without blocking. " +
         "Review a finished branch and merge it into yours with git merge " +
         "if the work is good.",
       parameters: Type.Object({
@@ -221,8 +238,9 @@ export default function (pi: ExtensionAPI) {
                   `Subagent ${rec.id} is running on branch ${rec.branch} ` +
                   `(created from ${rec.branchStart}). ` +
                   `Continue your work or spawn more subagents; its result ` +
-                  `will be delivered to you when it finishes. You can also ` +
-                  `call subagent_results to wait for it.`,
+                  `will be delivered to you when it finishes. To check on it ` +
+                  `later without blocking, call subagent_status with ` +
+                  `defer_time (seconds).`,
               },
             ],
             details: { id: rec.id, branch: rec.branch },
@@ -239,32 +257,46 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
-  // Check subagent status and collect results. Results are also delivered
-  // proactively when a subagent finishes; use this tool to check on
-  // running subagents, wait for a specific one, or re-fetch results.
+  // Non-blocking subagent status check. Reports each subagent's state and, for
+  // running ones, activity diagnostics (elapsed, last activity, recent tool
+  // calls) with heuristics that flag a subagent that appears stuck or
+  // looping. Results are also delivered proactively when a subagent
+  // finishes, so this is for checking on running subagents. Pass defer_time
+  // (seconds) to schedule the check in the background: the tool returns
+  // immediately and the status is delivered to the agent as a message after
+  // the delay — "dispatch a subagent and check on it in 5 minutes".
   pi.registerTool(
     defineTool({
-      name: "subagent_results",
-      label: "Subagent results",
+      name: "subagent_status",
+      label: "Subagent status",
       promptSnippet:
-        "subagent_results: get the status and results of spawned subagents " +
-        "(waits until one finishes; results are also delivered proactively)",
+        "subagent_status: non-blocking check on spawned subagents; use " +
+        "defer_time (seconds) to check later in the background",
       description:
-        "Check subagent status. Returns the results of finished subagents " +
-        "(final summary and commit list) and the status of running ones. " +
-        "If subagents are still running and none has finished yet, this " +
-        "blocks until at least one finishes. Finished subagents also notify " +
-        "you proactively with a message, so this tool is mainly for waiting " +
-        "on running subagents or re-fetching results. Optionally pass an " +
-        "id to wait for a specific subagent only.",
+        "Check on spawned subagents without blocking. Returns each " +
+        "subagent's state; for running ones it includes elapsed time, last " +
+        "activity, recent tool calls, and hints when a subagent appears stuck " +
+        "(no recent activity) or looping (repeating the same action). " +
+        "Finished subagents report themselves proactively, so use this to " +
+        "monitor running ones. Optionally pass an id to inspect one " +
+        "subagent. To check later without blocking, pass defer_time in " +
+        "seconds: the tool returns now and the status is delivered to you as " +
+        "a message after the delay.",
       parameters: Type.Object({
         id: Type.Optional(
-          Type.String({ description: "Only wait for this subagent id" }),
+          Type.String({ description: "Only report on this subagent id" }),
+        ),
+        defer_time: Type.Optional(
+          Type.Number({
+            description:
+              "Seconds to wait before delivering the status as a message " +
+              "(checked in the background, does not block this turn).",
+          }),
         ),
       }),
-      execute: async (_id, params, signal, _onUpdate, ctx) => {
+      execute: async (_id, params, _signal, _onUpdate, ctx) => {
         touch(ctx);
-        const text = await subagents.results(params.id, signal);
+        const text = subagents.status(params.id, params.defer_time);
         return { content: [{ type: "text" as const, text }], details: {} };
       },
     }),
@@ -291,7 +323,8 @@ export default function (pi: ExtensionAPI) {
       `You can delegate work to subagents with the spawn_subagent tool: each runs in its own detached sandbox session ` +
       `on a fresh branch created from your branch, in the background. When one finishes, its result (summary and commits) ` +
       `is delivered to you as a message; review the branch and merge it into your branch with git merge if the work is good. ` +
-      `Use subagent_results to check on running subagents or wait for a specific one.`;
+      `Use subagent_status to check on running subagents (non-blocking); pass defer_time (seconds) to check on one later ` +
+      `without blocking this turn.`;
   });
 }
 
