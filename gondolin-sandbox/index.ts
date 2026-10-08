@@ -113,11 +113,12 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     await sandbox.ensureVm(ctx);
     event.systemPromptOptions.sections.cwd =
-      `${GUEST_WORKSPACE} (sandboxed git worktree on branch ` +
+      `You are working in a gondolin sandbox; cwd: ${GUEST_WORKSPACE} (a git worktree owned by you, branch: ` +
       `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
-      `Only the shared git repository is persistent inside the sandbox; the rest ` +
-      `of the filesystem is ephemeral. Commit your work to the current branch ` +
-      `so it is not lost.`;
+      `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
+      `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
+      `The shared git repository is the ONLY persistence in the sandbox; the rest of the filesystem is ephemeral. ` +
+      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.`;
   });
 }
 
