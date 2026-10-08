@@ -34,12 +34,9 @@ pi '/build-in-sandbox <what do you want to build?>'
 
 ### The guest
 
-- `image.json` defines an Alpine 3.23 aarch64 image (krun firmware 5.2.1) with git,
-  node, python, uv, bash, and friends. Build its assets (kernel, initramfs,
-  rootfs) into `image/assets` (gitignored) with `npm run build:basic-image`.
-  The extension loads the assets from `image/assets` on VM launch.
+- `image/image.json` defines a basic Alpine image with git, use `npm run build:basic-image` to build it.
 - The host's `.git` directory is mounted into the guest at `/source/.git`.
-- On launch, the extension writes `scripts/prepare.sh` and a `prepare-commit-msg` git hook
+- On launch, the extension writes `src/scripts/prepare.sh` and a `prepare-commit-msg` git hook
   into the guest, then runs `prepare.sh`, which:
   - configures the guest git identity (`GIT_NAME`/`GIT_EMAIL` from `config.ts`),
   - points `core.hooksPath` at the installed hooks,
@@ -177,18 +174,18 @@ running subagents are aborted and cleaned up.
 
 | File | Purpose |
 |---|---|
-| `index.ts` | Extension entry point: registers the command, tools, and session hooks |
-| `commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
-| `vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
-| `subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
-| `config.ts` | Guest layout, git identity, limits, session entry type, config contract |
-| `config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret resolution |
-| `branch-name.ts` | Prompt → branch name summarizer and sanitizer |
-| `guest-path.ts` | Host path → guest path mapping |
-| `ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |
-| `scripts/prepare.sh` | Guest-side git setup, run on VM launch |
-| `scripts/prepare-commit-msg` | Git hook adding the pi-agent co-author trailer |
-| `image.json` | Gondolin guest image definition |
+| `src/index.ts` | Extension entry point: registers the command, tools, and session hooks |
+| `src/commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
+| `src/vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
+| `src/subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
+| `src/config.ts` | Guest layout, git identity, limits, session entry type, config contract |
+| `src/config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret resolution |
+| `src/branch-name.ts` | Prompt → branch name summarizer and sanitizer |
+| `src/guest-path.ts` | Host path → guest path mapping |
+| `src/ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |
+| `src/scripts/prepare.sh` | Guest-side git setup, run on VM launch |
+| `src/scripts/prepare-commit-msg` | Git hook adding the pi-agent co-author trailer |
+| `image/image.json` | Gondolin guest image definition |
 
 ## Notes
 
