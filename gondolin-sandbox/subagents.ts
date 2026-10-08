@@ -14,8 +14,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import type { VM } from "@earendil-works/gondolin";
-import { requestBranchName } from "./branch-name";
-import { BRANCH_NAME_MAX_LENGTH } from "./config";
+import {
+  requestBranchName,
+  requestDistinctBranchName,
+} from "./branch-name";
 import { guestWorkspace } from "./config";
 import { createGondolinBashOps } from "./ops/bash";
 import { createGondolinEditOps } from "./ops/edit";
@@ -124,8 +126,17 @@ export function createSubagentManager(
     if (!model) throw new Error("no model selected — pick one with /model first");
 
     return withSerial(async () => {
+      // Ask the model for a branch name; if it collides with an existing
+      // branch in the shared .git, recover by prompting the model again for a
+      // distinct name (with a deterministic suffix as a final fallback).
       const base = await requestBranchName(model, ctx.modelRegistry, prompt);
-      const branch = await uniqueBranchName(base);
+      const branch = await requestDistinctBranchName(
+        model,
+        ctx.modelRegistry,
+        prompt,
+        base,
+        refExists,
+      );
 
       // Base the subagent branch on the parent's branch when it exists in
       // the shared .git, otherwise on the current HEAD commit, so the
@@ -139,7 +150,9 @@ export function createSubagentManager(
         localCwd,
         localGitDir,
         branchStart,
-      });
+        // isSubagent landed in vm.ts by the sizing task; cast until it does.
+        isSubagent: true,
+      } as Parameters<typeof launchDetachedVm>[1]);
 
       counter += 1;
       let resolveSettle: () => void;
@@ -325,21 +338,6 @@ export function createSubagentManager(
       if (r.session) r.session.dispose();
     }
     await Promise.allSettled(records.map((r) => r.settle));
-  }
-
-  // The branch name must not already exist in the shared repository: a
-  // subagent always gets a fresh branch to commit to. Suffix with -2, -3, …
-  // (trimming the stem to stay within BRANCH_NAME_MAX_LENGTH) until unique.
-  async function uniqueBranchName(base: string): Promise<string> {
-    if (!(await refExists(base))) return base;
-    let stem = base;
-    for (let i = 2; ; i++) {
-      const suffix = `-${i}`;
-      const maxStem = BRANCH_NAME_MAX_LENGTH - suffix.length;
-      if (stem.length > maxStem) stem = stem.slice(0, maxStem).replace(/-+$/, "");
-      const candidate = `${stem}${suffix}`;
-      if (!(await refExists(candidate))) return candidate;
-    }
   }
 
   // Host-side git helpers: the shared .git is the host's .git, so refs and
