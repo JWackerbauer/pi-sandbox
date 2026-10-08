@@ -1,15 +1,13 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   createBashTool,
   createEditTool,
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-coding-agent";
-import { GUEST_WORKSPACE, WORK_BRANCH_NAME } from "./config";
+import { GUEST_WORKSPACE, DEFAULT_WORK_BRANCH } from "./config";
 import { createSandbox } from "./vm";
+import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createGondolinReadOps } from "./ops/read";
 import { createGondolinWriteOps } from "./ops/write";
 import { createGondolinEditOps } from "./ops/edit";
@@ -26,11 +24,12 @@ export default function (pi: ExtensionAPI) {
 
   const sandbox = createSandbox(localCwd, localGitDir);
 
-  pi.on("session_start", async (_event, ctx) => {
-    // Start eagerly so the user sees errors early (missing qemu, etc.)
-    await sandbox.ensureVm(ctx);
-  });
+  // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
+  // and starts the first turn with the user's prompt.
+  registerBuildCommand(pi, sandbox);
 
+  // The VM is started lazily: by /build-in-sandbox (with the generated
+  // branch) or by the first tool call that needs it (default branch).
   pi.on("session_shutdown", async (_event, ctx) => {
     if (!sandbox.vm) return;
     ctx.ui.setStatus(
@@ -95,7 +94,7 @@ export default function (pi: ExtensionAPI) {
     await sandbox.ensureVm(ctx);
     const modified = event.systemPrompt.replace(
       `Current working directory: ${localCwd}`,
-      `Current working directory: ${GUEST_WORKSPACE} (sandboxed git worktree ${WORK_BRANCH_NAME})`,
+      `Current working directory: ${GUEST_WORKSPACE} (sandboxed git worktree ${sandbox.branch ?? DEFAULT_WORK_BRANCH})`,
     );
     return { systemPrompt: modified };
   });
