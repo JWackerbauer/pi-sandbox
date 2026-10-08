@@ -1,7 +1,4 @@
 #!/bin/sh
 # Add pi-agent co-author trailer to commits made by the agent
-if [ "$2" = "" ] && [ "$3" = "" ] && grep -qF "Co-Authored-By: pi-agent <pi-agent@localhost>" "$1"
-2>/dev/null; then
-    exit 0
-fi
+grep -qF "Co-Authored-By: pi-agent <pi-agent@localhost>" "$1" 2>/dev/null && exit 0
 printf '\nCo-Authored-By: pi-agent <pi-agent@localhost>' >> "$1"
