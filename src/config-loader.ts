@@ -32,7 +32,9 @@ function mergeSizing(
 
 // Project values override global values field by field, so a project config
 // can override just `vm.memory` while inheriting `vm.cpus` from the global
-// config.
+// config. For `commands`, each list is overridden wholesale (a project
+// config that sets `commands.startup` replaces the global list; it does not
+// concatenate).
 function mergeConfigs(
   global: GondolinConfig,
   project: GondolinConfig,
@@ -44,6 +46,14 @@ function mergeConfigs(
   };
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;
+  }
+  if (global.commands || project.commands) {
+    merged.commands = {
+      startup:
+        project.commands?.startup ?? global.commands?.startup,
+      prepare:
+        project.commands?.prepare ?? global.commands?.prepare,
+    };
   }
   return merged;
 }

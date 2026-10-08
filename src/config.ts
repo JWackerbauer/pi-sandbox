@@ -73,6 +73,20 @@ export interface VmSizing {
   cpus?: number;
 }
 
+/**
+ * User-defined shell commands run inside the guest, in list order. Each
+ * entry is a shell line run via /bin/sh -lc in the guest.
+ */
+export interface CommandHooks {
+  /** Run on every VM launch, right after boot (before the prepare script). */
+  startup?: string[];
+  /**
+   * Run on every VM launch, after prepare.sh succeeded (the work branch's
+   * worktree exists at /<branch>).
+   */
+  prepare?: string[];
+}
+
 /** A shared secret wired into every VM via the Gondolin secret SDK. */
 export interface SecretConfig {
   /** Host patterns this secret may be sent to (e.g. ["github.com"]). */
@@ -108,6 +122,13 @@ export interface GondolinConfig {
    * guest). Default true. Set false to disable both.
    */
   scratch?: boolean;
+  /**
+   * User-defined commands run inside the guest on every VM launch (main
+   * session and subagents). Use these to install/prepare the project's
+   * toolchain (e.g. "curl ... | sh" style installers, cache warmups).
+   * Project values override global values per list.
+   */
+  commands?: CommandHooks;
 }
 
 // Default sizing: the main VM keeps the runner defaults; subagent VMs are

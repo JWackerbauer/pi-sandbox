@@ -27,6 +27,8 @@ import {
   hostScratchShared,
   PREPARE_SCRIPT,
 } from "./config";
+import type { CommandHooks } from "./config";
+import type { VM } from "@earendil-works/gondolin";
 
 export interface DetachedVmOptions {
   localCwd: string;
@@ -116,6 +118,9 @@ export async function launchDetachedVm(
       path.join(GIT_HOOKS_DIR, "prepare-commit-msg"),
       fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg")),
     );
+    // User-defined post-boot commands (config `commands.startup`), run
+    // before the prepare script so they can prepare the guest for it.
+    await runUserCommands(created, config.commands?.startup, "startup");
 
     // `branch` and `branchStart` are sanitized branch names ([a-z0-9-] only)
     // or commit hashes, so they are safe to interpolate into the shell
@@ -143,6 +148,10 @@ export async function launchDetachedVm(
         `gondolin: prepare.sh failed with exit code ${result.exitCode}\n${detail}`,
       );
     }
+
+    // User-defined post-prepare commands (config `commands.prepare`), run
+    // after the worktree exists, so they can use /<branch>.
+    await runUserCommands(created, config.commands?.prepare, "prepare");
     return created;
   } catch (err) {
     // Tear down the half-configured VM so a retry starts clean, then
@@ -159,6 +168,30 @@ export async function launchDetachedVm(
 // Remove a detached VM's worktree (and its shared .git registration),
 // targeting only that branch's guest path. Best-effort: a crash before this
 // runs leaves a stale registration that prepare.sh detects at the next start.
+
+// Run user-defined commands (config `commands.startup` / `commands.prepare`)
+// inside the guest, in list order. Each entry is a shell line run via
+// /bin/sh -lc. A non-zero exit fails the VM launch with the command output
+// surfaced, mirroring the prepare.sh failure behavior — a broken toolchain
+// setup should not be silently swallowed.
+async function runUserCommands(
+  vm: VM,
+  commands: CommandHooks["startup"] | undefined,
+  label: string,
+): Promise<void> {
+  for (const cmd of commands ?? []) {
+    const result = await vm.exec(cmd);
+    if (result.exitCode !== 0) {
+      const detail =
+        [result.stdout.trim(), result.stderr.trim()]
+          .filter((d) => d.length > 0)
+          .join("\n") || "(no output)";
+      throw new Error(
+        `gondolin: ${label} command failed with exit code ${result.exitCode}: ${cmd}\n${detail}`,
+      );
+    }
+  }
+}
 export async function removeDetachedWorktree(
   vm: VM,
   branch: string,
