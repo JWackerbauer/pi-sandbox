@@ -1,14 +1,30 @@
+import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { VM, RealFSProvider } from "@earendil-works/gondolin";
+import {
+  VM,
+  RealFSProvider,
+  createHttpHooks,
+} from "@earendil-works/gondolin";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+  computeRepoKey,
+  loadGondolinConfig,
+  resolveSecrets,
+} from "./config-loader";
+import {
+  DEFAULT_SUBAGENT_SIZING,
+  DEFAULT_VM_SIZING,
   DEFAULT_WORK_BRANCH,
   guestWorkspace,
   GUEST_GIT_DIR,
+  GUEST_SCRATCH,
+  GUEST_SCRATCH_LOCAL,
   GIT_EMAIL,
   GIT_HOOKS_DIR,
   GIT_NAME,
+  hostScratchBranch,
+  hostScratchShared,
   PREPARE_SCRIPT,
 } from "./config";
 
@@ -17,6 +33,12 @@ export interface DetachedVmOptions {
   localGitDir: string;
   /** Ref the new work branch is created from. Default: the repo HEAD. */
   branchStart?: string;
+  /**
+   * Launch with the smaller subagent sizing (config `subagent` / 512M/1 CPU
+   * instead of `vm` / 1G/2 CPUs). Subagents run in parallel next to the
+   * main VM, so they get less by default.
+   */
+  isSubagent?: boolean;
 }
 
 // Create a standalone VM for the given work branch: mounts the shared .git,
@@ -29,15 +51,56 @@ export async function launchDetachedVm(
   branch: string,
   opts: DetachedVmOptions,
 ): Promise<VM> {
-  const { localCwd, localGitDir, branchStart } = opts;
+  const { localCwd, localGitDir, branchStart, isSubagent = false } = opts;
+
+  // The config is a tiny JSON read; loading it per launch keeps this simple
+  // and always current.
+  const config = loadGondolinConfig(
+    localCwd,
+    path.join(os.homedir(), ".pi", "agent"),
+  );
+
+  // Subagent VMs run in parallel alongside the main VM, so they get the
+  // smaller sizing by default. `isSubagent` is not set by the main session's
+  // createSandbox, which therefore uses the main sizing.
+  const sizing =
+    (isSubagent ? config.subagent : config.vm) ??
+    (isSubagent ? DEFAULT_SUBAGENT_SIZING : DEFAULT_VM_SIZING);
+
+  // Shared secrets: values come from the host environment, the guest only
+  // ever sees placeholders, and requests may only be sent to the hosts
+  // listed in the config (see config-loader.ts / Gondolin secret SDK).
+  const { httpHooks, env } = createHttpHooks({
+    secrets: resolveSecrets(config),
+  });
+
+  const mounts: Record<string, RealFSProvider> = {
+    [GUEST_GIT_DIR]: new RealFSProvider(localGitDir),
+  };
+  if (config.scratch !== false) {
+    // Scratch dirs live under the host's tempdir so they persist across
+    // VM/session restarts. RealFSProvider mounts a real host path, which
+    // must exist before the VM starts.
+    const repoKey = computeRepoKey(localCwd);
+    const tempdir = os.tmpdir();
+    const hostShared = hostScratchShared(tempdir, repoKey);
+    const hostBranch = hostScratchBranch(tempdir, repoKey, branch);
+    fs.mkdirSync(hostShared, { recursive: true });
+    fs.mkdirSync(hostBranch, { recursive: true });
+    mounts[GUEST_SCRATCH] = new RealFSProvider(hostShared);
+    mounts[GUEST_SCRATCH_LOCAL] = new RealFSProvider(hostBranch);
+  }
+
   const created = await VM.create({
     sandbox: {
       imagePath: "./gondolin-sandbox/image-assets",
     },
+    memory: sizing.memory,
+    cpus: sizing.cpus,
+    httpHooks,
+    env,
     vfs: {
-      mounts: {
-        [GUEST_GIT_DIR]: new RealFSProvider(localGitDir),
-      },
+      mounts,
     },
   });
 

@@ -81,6 +81,33 @@ deterministic name derived from the first words of the prompt.
 
 ### Subagents
 
+Subagent VMs use smaller sizing by default (see **Configuration** below).
+
+### Configuration
+
+The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondolin.json` (global) and `<repo>/.pi/gondolin.json` (project, overrides global field by field). Missing or invalid files are treated as empty. All fields are optional.
+
+```json
+{
+  "vm": { "memory": "2G", "cpus": 4 },
+  "subagent": { "memory": "512M", "cpus": 1 },
+  "secrets": {
+    "GH_TOKEN": { "hosts": ["github.com"] }
+  },
+  "scratch": true
+}
+```
+
+- **VM sizing** — `vm` sizes the main session's VM (default `1G` / 2 CPUs); `subagent` sizes subagent VMs, which run in parallel next to the main VM and are smaller by default (`512M` / 1 CPU). Values use the guest runner's native syntax (`memory`: qemu syntax like `"512M"`, `"1G"`; `cpus`: integer).
+- **Shared secrets** — `secrets` maps an *environment variable name* to a secret config. At VM launch the value is read from `process.env[name]` on the host and wired into the guest through Gondolin's secret SDK: the guest only ever sees a placeholder (random, or your `placeholder` if set) and requests carrying the secret may only be sent to the listed `hosts`. Entries whose env var is unset are skipped, so no secret value ever lives in a config file. Example: with `GH_TOKEN` set, the guest can authenticate to `github.com` without the token ever appearing in the VM.
+- **Scratch mounts** — two host directories are mounted into every guest so files survive VM/session restarts (they live under the host's tempdir, not in the VM's ephemeral disk):
+  - `/scratch` — per-repo, shared by every sandbox session of that repo. Host path: `<tempdir>/gondolin/<repo-key>/scratch`.
+  - `/scratch-local` — per-repo *and* per-branch, private to the current work branch. Host path: `<tempdir>/gondolin/<repo-key>/<branch>/scratch`.
+
+  `<repo-key>` is the repo's basename (sanitized to `[a-z0-9-]`) plus the first 8 hex chars of the sha256 of its absolute path, so same-named repos in different locations never collide. Set `"scratch": false` to disable both mounts.
+
+### Subagents
+
 The extension registers two tools that let the agent delegate work to subagents,
 each running in its own **detached sandbox session**:
 
@@ -121,7 +148,8 @@ running subagents are aborted and cleaned up.
 | `commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
 | `vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
 | `subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, results, shutdown |
-| `config.ts` | Guest layout, git identity, limits, session entry type |
+| `config.ts` | Guest layout, git identity, limits, session entry type, config contract |
+| `config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret resolution |
 | `branch-name.ts` | Prompt → branch name summarizer and sanitizer |
 | `guest-path.ts` | Host path → guest path mapping |
 | `ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |
@@ -136,5 +164,6 @@ running subagents are aborted and cleaned up.
   different branch *within the same session* replaces that session's VM. Subagents are the
   same idea *within* one session: each gets its own detached VM and branch, running in the
   background next to the parent's VM.
-- Everything in the guest except the git repository is ephemeral — the agent is told this
-  and must commit its work to its branch (subagents too; their branches outlive their VMs).
+- Everything in the guest except the git repository and the scratch mounts (`/scratch`,
+  `/scratch-local`) is ephemeral — the agent is told this and must commit its work to its
+  branch (subagents too; their branches outlive their VMs).
