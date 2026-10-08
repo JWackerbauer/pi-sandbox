@@ -56,3 +56,60 @@ export async function requestBranchName(
   const fromModel = toBranchName(text);
   return fromModel.length > 0 ? fromModel : toBranchName(prompt);
 }
+
+// Deterministic fallback for a taken branch name: suffix the base with -2,
+// -3, … (trimming the stem to stay within BRANCH_NAME_MAX_LENGTH) until
+// `isTaken` reports the candidate as free. Always terminates.
+export async function uniqueBranchName(
+  base: string,
+  isTaken: (name: string) => Promise<boolean>,
+): Promise<string> {
+  if (!(await isTaken(base))) return base;
+  let stem = base;
+  for (let i = 2; ; i++) {
+    const suffix = `-${i}`;
+    const maxStem = BRANCH_NAME_MAX_LENGTH - suffix.length;
+    if (stem.length > maxStem) stem = stem.slice(0, maxStem).replace(/-+$/, "");
+    const candidate = `${stem}${suffix}`;
+    if (!(await isTaken(candidate))) return candidate;
+  }
+}
+
+// Ask the model for a branch name, and — if that name is already in use —
+// recover by prompting the model again for a distinct name. Collision checks
+// go through `isTaken` (the caller passes a real shared-`.git` lookup, not
+// the guest). Falls back to a deterministic unique suffix so a branch name
+// is always produced and spawn always succeeds.
+export async function requestDistinctBranchName(
+  model: Model<any>,
+  registry: ExtensionContext["modelRegistry"],
+  prompt: string,
+  takenName: string,
+  isTaken: (name: string) => Promise<boolean>,
+): Promise<string> {
+  const first = await requestBranchName(model, registry, prompt);
+  if (!(await isTaken(first))) return first;
+
+  // The model's pick collided. Ask it again, telling it the name it just
+  // chose is already in use (plus any other known-taken names), up to 2
+  // extra times.
+  const taken = new Set<string>([first]);
+  if (takenName) taken.add(takenName);
+  let last = first;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const retryPrompt =
+      `The branch name "${last}" you just suggested is already in use in ` +
+      `this repository. Pick a DIFFERENT short git branch name for the ` +
+      `build request below. Avoid these names that are already taken: ` +
+      `[${[...taken].join(", ")}]. Reply with a fresh kebab-case branch ` +
+      `name only, no explanation, no quotes.\n\nBuild request:\n${prompt}`;
+    const candidate = await requestBranchName(model, registry, retryPrompt);
+    if (!(await isTaken(candidate))) return candidate;
+    last = candidate;
+    taken.add(candidate);
+  }
+
+  // Every model suggestion collided: give up on the model and fall back to a
+  // deterministic unique suffix so spawn always succeeds.
+  return uniqueBranchName(last, isTaken);
+}
