@@ -1,11 +1,19 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 import {
   createBashTool,
   createEditTool,
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-coding-agent";
-import { GUEST_WORKSPACE, DEFAULT_WORK_BRANCH } from "./config";
+import {
+  GUEST_WORKSPACE,
+  DEFAULT_WORK_BRANCH,
+  SANDBOX_ENTRY_TYPE,
+  type SandboxEntryData,
+} from "./config";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createGondolinReadOps } from "./ops/read";
@@ -27,6 +35,16 @@ export default function (pi: ExtensionAPI) {
   // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
   // and starts the first turn with the user's prompt.
   registerBuildCommand(pi, sandbox);
+
+  // Bring the sandbox back up when a session that ran in the sandbox is
+  // started, resumed, reloaded, or forked. /build-in-sandbox persists the
+  // work branch as a custom entry.
+  pi.on("session_start", async (_event, ctx) => {
+    const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
+    if (branch) {
+      await sandbox.launch(branch, ctx);
+    }
+  });
 
   // The VM is started lazily: by /build-in-sandbox (with the generated
   // branch) or by the first tool call that needs it (default branch).
@@ -98,4 +116,18 @@ export default function (pi: ExtensionAPI) {
     );
     return { systemPrompt: modified };
   });
+}
+
+// The work branch of the most recent /build-in-sandbox in this session
+// branch, if any.
+function lastSandboxBranch(
+  entries: SessionEntry[],
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type === "custom" && entry.customType === SANDBOX_ENTRY_TYPE) {
+      return (entry.data as SandboxEntryData | undefined)?.branch;
+    }
+  }
+  return undefined;
 }

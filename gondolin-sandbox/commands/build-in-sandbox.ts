@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { requestBranchName } from "../branch-name";
+import { SANDBOX_ENTRY_TYPE } from "../config";
 import type { GondolinSandbox } from "../vm";
 
 // /build-in-sandbox <prompt>
@@ -50,6 +51,9 @@ export function registerBuildCommand(
       pi.setSessionName(branch);
 
       await sandbox.launch(branch, ctx);
+      // Persist the branch so /resume (and /reload) can relaunch the
+      // sandbox for it. Custom entries are not sent to the LLM.
+      pi.appendEntry(SANDBOX_ENTRY_TYPE, { branch });
       pi.sendUserMessage(prompt);
     },
   });

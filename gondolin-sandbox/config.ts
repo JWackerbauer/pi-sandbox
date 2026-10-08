@@ -9,6 +9,13 @@ export const GUEST_GIT_DIR = "/source/.git";
 export const GIT_HOOKS_DIR = "/root/.git/hooks";
 export const PREPARE_SCRIPT = "/prepare.sh";
 
+// Custom session entry type persisting the sandbox work branch, so a
+// resumed session can bring the sandbox back up.
+export const SANDBOX_ENTRY_TYPE = "gondolin.sandbox";
+export interface SandboxEntryData {
+  branch: string;
+}
+
 // Work branch used when the sandbox starts outside of /build-in-sandbox
 // (e.g. a tool needs a VM before the user has requested a build).
 export const DEFAULT_WORK_BRANCH = "gondolin-test";
