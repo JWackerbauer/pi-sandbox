@@ -1,6 +1,12 @@
 # RFC: devcontainer-driven Gondolin images & a setup Makefile
 
-- **Status:** Draft
+- **Status:** Draft — **partially superseded**: the `postBuild` image hook is
+  now supported directly as a `postBuild` section in `gondolin.json` (global
+  or `<repo>/.pi/gondolin.json`), built into a custom image at startup and
+  cached under the repo's `.pi/assets`. The devcontainer-parsing layer in
+  Feature A (and the `postCreateCommand` → `postBuild.commands` mapping in
+  particular) is no longer needed for the common case; Feature B (Makefile)
+  remains open.
 - **Author:** (pending)
 - **Date:** YYYY-MM-DD (placeholder)
 

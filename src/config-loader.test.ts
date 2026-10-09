@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   computeRepoKey,
   loadGondolinConfig,
+  resolvePostBuild,
   resolveSecrets,
 } from "./config-loader";
 
@@ -43,7 +44,8 @@ test("missing config files yield an empty config", () => {
   assert.equal(cfg.vm, undefined);
   assert.equal(cfg.subagent, undefined);
   assert.equal(cfg.scratch, undefined);
-  assert.equal(cfg.commands, undefined);
+  assert.equal(cfg.postStartup, undefined);
+  assert.equal(cfg.postBuild, undefined);
   assert.equal(Object.keys(cfg.secrets ?? {}).length, 0);
 });
 
@@ -70,25 +72,56 @@ test("project values override global values field by field", () => {
   assert.deepEqual(cfg.subagent, { memory: "512M" });
 });
 
-test("commands lists are overridden wholesale per list", () => {
+test("postStartup and postBuild are overridden wholesale", () => {
   const { agentDir, localCwd } = makeEnv(
     {
-      commands: {
-        startup: ["echo global-startup"],
-        prepare: ["echo global-prepare"],
-      },
+      postStartup: ["echo global-poststartup"],
+      postBuild: { commands: ["apk add ripgrep"] },
     },
-    {
-      commands: {
-        startup: ["echo project-startup"],
-      },
-    },
+    { postStartup: ["echo project-poststartup"] },
   );
   const cfg = loadGondolinConfig(localCwd, agentDir);
-  // Project replaces the global startup list entirely (no concatenation)
-  // and inherits the global prepare list it does not set.
-  assert.deepEqual(cfg.commands?.startup, ["echo project-startup"]);
-  assert.deepEqual(cfg.commands?.prepare, ["echo global-prepare"]);
+  // Project replaces the global postStartup list entirely (no
+  // concatenation) and inherits the global postBuild section it does not
+  // set.
+  assert.deepEqual(cfg.postStartup, ["echo project-poststartup"]);
+  assert.deepEqual(cfg.postBuild, { commands: ["apk add ripgrep"] });
+});
+
+test("resolvePostBuild is null without a postBuild section", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { postStartup: ["echo hi"] },
+    { postStartup: ["echo hi"] },
+  );
+  assert.equal(resolvePostBuild(localCwd, agentDir), null);
+});
+
+test("resolvePostBuild: project section builds into <repo>/.pi/assets", () => {
+  const { agentDir, localCwd } = makeEnv(
+    null,
+    { postBuild: { commands: ["apk add ripgrep"] } },
+  );
+  const resolved = resolvePostBuild(localCwd, agentDir);
+  assert.deepEqual(resolved?.postBuild, { commands: ["apk add ripgrep"] });
+  assert.equal(resolved?.assetDir, path.join(localCwd, ".pi", "assets"));
+});
+
+test("resolvePostBuild: global-only section builds into <agentDir>/assets, project overrides wholesale", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { postBuild: { commands: ["apk add jq"] } },
+    { postBuild: { copy: [{ src: "a", dest: "/a" }] } },
+  );
+  const resolved = resolvePostBuild(localCwd, agentDir);
+  assert.deepEqual(resolved?.postBuild, { copy: [{ src: "a", dest: "/a" }] });
+  assert.equal(resolved?.assetDir, path.join(localCwd, ".pi", "assets"));
+
+  const { agentDir: g2, localCwd: l2 } = makeEnv(
+    { postBuild: { commands: ["apk add jq"] } },
+    null,
+  );
+  const globalOnly = resolvePostBuild(l2, g2);
+  assert.deepEqual(globalOnly?.postBuild, { commands: ["apk add jq"] });
+  assert.equal(globalOnly?.assetDir, path.join(g2, "assets"));
 });
 
 test("secrets merge per key", () => {

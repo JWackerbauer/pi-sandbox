@@ -10,8 +10,10 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   computeRepoKey,
   loadGondolinConfig,
+  resolvePostBuild,
   resolveSecrets,
 } from "./config-loader";
+import { resolveImageAssets } from "./image";
 import {
   DEFAULT_SUBAGENT_SIZING,
   DEFAULT_VM_SIZING,
@@ -27,7 +29,6 @@ import {
   hostScratchShared,
   PREPARE_SCRIPT,
 } from "./config";
-import type { CommandHooks } from "./config";
 
 export interface DetachedVmOptions {
   localCwd: string;
@@ -40,6 +41,8 @@ export interface DetachedVmOptions {
    * main VM, so they get less by default.
    */
   isSubagent?: boolean;
+  /** Optional progress notice callback (e.g. for custom image builds). */
+  onNotice?: (message: string) => void;
 }
 
 // Create a standalone VM for the given work branch: mounts the shared .git,
@@ -56,9 +59,14 @@ export async function launchDetachedVm(
 
   // The config is a tiny JSON read; loading it per launch keeps this simple
   // and always current.
-  const config = loadGondolinConfig(
-    localCwd,
-    path.join(os.homedir(), ".pi", "agent"),
+  const agentDir = path.join(os.homedir(), ".pi", "agent");
+  const config = loadGondolinConfig(localCwd, agentDir);
+
+  // Image assets: the stock image, or a custom image built from the config's
+  // postBuild section (cached; built on first use).
+  const imagePath = await resolveImageAssets(
+    resolvePostBuild(localCwd, agentDir),
+    opts.onNotice,
   );
 
   // Subagent VMs run in parallel alongside the main VM, so they get the
@@ -95,7 +103,7 @@ export async function launchDetachedVm(
   const moduleRoot = path.resolve(__dirname);
   const created = await VM.create({
     sandbox: {
-      imagePath: `${moduleRoot}/../image/assets`,
+      imagePath,
     },
     memory: sizing.memory,
     cpus: sizing.cpus,
@@ -117,10 +125,6 @@ export async function launchDetachedVm(
       path.join(GIT_HOOKS_DIR, "prepare-commit-msg"),
       fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg")),
     );
-    // User-defined post-boot commands (config `commands.startup`), run
-    // before the prepare script so they can prepare the guest for it.
-    await runUserCommands(created, config.commands?.startup, "startup");
-
     // `branch` and `branchStart` are sanitized branch names ([a-z0-9-] only)
     // or commit hashes, so they are safe to interpolate into the shell
     // command. String form runs in /bin/sh -lc "..."
@@ -148,9 +152,13 @@ export async function launchDetachedVm(
       );
     }
 
-    // User-defined post-prepare commands (config `commands.prepare`), run
-    // after the worktree exists, so they can use /<branch>.
-    await runUserCommands(created, config.commands?.prepare, "prepare");
+    // User-defined post-startup commands (config `postStartup`), run in the
+    // agent's workspace, which exists once prepare.sh created the worktree.
+    await runPostStartupCommands(
+      created,
+      config.postStartup,
+      guestWorkspace(branch),
+    );
     return created;
   } catch (err) {
     // Tear down the half-configured VM so a retry starts clean, then
@@ -168,25 +176,25 @@ export async function launchDetachedVm(
 // targeting only that branch's guest path. Best-effort: a crash before this
 // runs leaves a stale registration that prepare.sh detects at the next start.
 
-// Run user-defined commands (config `commands.startup` / `commands.prepare`)
-// inside the guest, in list order. Each entry is a shell line run via
-// /bin/sh -lc. A non-zero exit fails the VM launch with the command output
-// surfaced, mirroring the prepare.sh failure behavior — a broken toolchain
-// setup should not be silently swallowed.
-async function runUserCommands(
+// Run user-defined post-startup commands (config `postStartup`) inside the
+// guest, in list order, with the agent's workspace as the working
+// directory. Each entry is a shell line run via /bin/sh -lc. A non-zero
+// exit fails the VM launch with the command output surfaced, mirroring the
+// prepare.sh failure behavior.
+async function runPostStartupCommands(
   vm: VM,
-  commands: CommandHooks["startup"] | undefined,
-  label: string,
+  commands: string[] | undefined,
+  workspace: string,
 ): Promise<void> {
   for (const cmd of commands ?? []) {
-    const result = await vm.exec(cmd);
+    const result = await vm.exec(cmd, { cwd: workspace });
     if (result.exitCode !== 0) {
       const detail =
         [result.stdout.trim(), result.stderr.trim()]
           .filter((d) => d.length > 0)
           .join("\n") || "(no output)";
       throw new Error(
-        `gondolin: ${label} command failed with exit code ${result.exitCode}: ${cmd}\n${detail}`,
+        `gondolin: postStartup command failed with exit code ${result.exitCode}: ${cmd}\n${detail}`,
       );
     }
   }
@@ -250,6 +258,7 @@ export function createSandbox(
       const created = await launchDetachedVm(requested, {
         localCwd,
         localGitDir,
+        onNotice: (message) => ctx?.ui.notify(message, "info"),
       });
       vm = created;
       branch = requested;

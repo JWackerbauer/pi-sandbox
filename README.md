@@ -103,7 +103,11 @@ The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondo
   "secrets": {
     "GH_TOKEN": { "hosts": ["github.com"] }
   },
-  "scratch": true
+  "scratch": true,
+  "postBuild": {
+    "commands": ["apk add ripgrep", "npm install -g pnpm"]
+  },
+  "postStartup": ["git submodule update --init"]
 }
 ```
 
@@ -114,6 +118,8 @@ The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondo
   - `/scratch-local` — per-repo *and* per-branch, private to the current work branch. Host path: `<tempdir>/gondolin/<repo-key>/<branch>/scratch`.
 
   `<repo-key>` is the repo's basename (sanitized to `[a-z0-9-]`) plus the first 8 hex chars of the sha256 of its absolute path, so same-named repos in different locations never collide. Set `"scratch": false` to disable both mounts.
+- **Custom image (`postBuild`)** — a `postBuild` section is baked into a custom image at startup: the stock `image/image.json` config is rebuilt with the section's `commands` run inside the rootfs after package installation (optionally after `copy` entries copy host files in). Use it to bring in the project's dev dependencies — the rootfs is sized to fit what the commands install, so big toolchains don't have to squeeze into the stock image at boot. The built assets are cached and reused across launches, and rebuilt only when the section (or the stock image config) changes. A project-level `postBuild` builds into the repo's `.pi/assets` (a `.pi/.gitignore` is added for the folder, so the image never lands in git history); a global-only `postBuild` builds into `~/.pi/agent/assets` and is shared by every repo.
+- **Post-startup commands (`postStartup`)** — a list of shell commands run in the agent's workspace (`/<branch>`) after the VM has started up and the worktree is ready, in list order. A non-zero exit fails the launch with the command output surfaced. The project list overrides the global list wholesale.
 
 ### Subagents
 

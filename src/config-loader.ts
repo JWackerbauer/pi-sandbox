@@ -5,7 +5,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { SecretDefinition } from "@earendil-works/gondolin";
-import type { GondolinConfig, SecretConfig, VmSizing } from "./config";
+import type {
+  GondolinConfig,
+  PostBuildConfig,
+  SecretConfig,
+  VmSizing,
+} from "./config";
 
 const CONFIG_FILE_NAME = "gondolin.json";
 
@@ -32,9 +37,8 @@ function mergeSizing(
 
 // Project values override global values field by field, so a project config
 // can override just `vm.memory` while inheriting `vm.cpus` from the global
-// config. For `commands`, each list is overridden wholesale (a project
-// config that sets `commands.startup` replaces the global list; it does not
-// concatenate).
+// config. `postStartup` and `postBuild` are overridden wholesale (a project
+// config that sets them replaces the global value; it does not concatenate).
 function mergeConfigs(
   global: GondolinConfig,
   project: GondolinConfig,
@@ -47,15 +51,42 @@ function mergeConfigs(
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;
   }
-  if (global.commands || project.commands) {
-    merged.commands = {
-      startup:
-        project.commands?.startup ?? global.commands?.startup,
-      prepare:
-        project.commands?.prepare ?? global.commands?.prepare,
-    };
+  if (global.postStartup || project.postStartup) {
+    merged.postStartup = project.postStartup ?? global.postStartup;
+  }
+  if (global.postBuild || project.postBuild) {
+    merged.postBuild = project.postBuild ?? global.postBuild;
   }
   return merged;
+}
+
+/**
+ * The effective `postBuild` section and the directory the custom image's
+ * assets should be built into. A project-level postBuild is repo-specific,
+ * so its assets live under `<localCwd>/.pi/assets`; a global-only
+ * postBuild applies to every repo, so its assets live under
+ * `<agentDir>/assets`. Returns null when no postBuild section is set.
+ */
+export interface PostBuildResolution {
+  postBuild: PostBuildConfig;
+  /** Directory to build (and cache) the custom image assets in. */
+  assetDir: string;
+}
+
+export function resolvePostBuild(
+  localCwd: string,
+  agentDir: string,
+): PostBuildResolution | null {
+  const global = readConfigFile(path.join(agentDir, CONFIG_FILE_NAME));
+  const project = readConfigFile(
+    path.join(localCwd, ".pi", CONFIG_FILE_NAME),
+  );
+  const postBuild = project.postBuild ?? global.postBuild;
+  if (!postBuild) return null;
+  const assetDir = project.postBuild
+    ? path.join(localCwd, ".pi", "assets")
+    : path.join(agentDir, "assets");
+  return { postBuild, assetDir };
 }
 
 /**

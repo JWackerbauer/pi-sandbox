@@ -74,17 +74,17 @@ export interface VmSizing {
 }
 
 /**
- * User-defined shell commands run inside the guest, in list order. Each
- * entry is a shell line run via /bin/sh -lc in the guest.
+ * The `postBuild` section of a Gondolin image config (mirrors the SDK's
+ * `BuildConfig.postBuild`). When present in a gondolin.json, a custom image
+ * is built at startup with these commands run inside the rootfs after
+ * package installation — use it to bake the project's dev dependencies
+ * into the image (the rootfs is sized to fit them).
  */
-export interface CommandHooks {
-  /** Run on every VM launch, right after boot (before the prepare script). */
-  startup?: string[];
-  /**
-   * Run on every VM launch, after prepare.sh succeeded (the work branch's
-   * worktree exists at /<branch>).
-   */
-  prepare?: string[];
+export interface PostBuildConfig {
+  /** Host files/directories copied into the rootfs before the commands run. */
+  copy?: { src: string; dest: string }[];
+  /** Shell commands executed in the rootfs after package installation. */
+  commands?: string[];
 }
 
 /** A shared secret wired into every VM via the Gondolin secret SDK. */
@@ -123,12 +123,20 @@ export interface GondolinConfig {
    */
   scratch?: boolean;
   /**
-   * User-defined commands run inside the guest on every VM launch (main
-   * session and subagents). Use these to install/prepare the project's
-   * toolchain (e.g. "curl ... | sh" style installers, cache warmups).
-   * Project values override global values per list.
+   * Shell commands run in the agent's workspace (`/<branch>`) after the VM
+   * has started up and the worktree is ready, in list order. Each entry is
+   * a shell line run via /bin/sh -lc in the guest. Project values override
+   * the global list wholesale.
    */
-  commands?: CommandHooks;
+  postStartup?: string[];
+  /**
+   * Post-build section baked into a custom image at startup (see
+   * PostBuildConfig). When set, the stock image is rebuilt with these
+   * commands and the assets are cached under the repo's `.pi` folder (or
+   * the global agent dir for a global-only postBuild). Project values
+   * override the global section wholesale.
+   */
+  postBuild?: PostBuildConfig;
 }
 
 // Default sizing: the main VM keeps the runner defaults; subagent VMs are
