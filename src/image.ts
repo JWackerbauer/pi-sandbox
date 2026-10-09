@@ -12,6 +12,7 @@ import {
   parseBuildConfig,
   verifyAssets,
   type BuildConfig,
+  type BuildOptions,
 } from "@earendil-works/gondolin";
 import type { PostBuildResolution } from "./config-loader";
 
@@ -19,6 +20,8 @@ import type { PostBuildResolution } from "./config-loader";
 const ASSETS_DIR_NAME = "assets";
 /** File recording the cache key of a custom image build. */
 const POSTBUILD_HASH_FILE = ".gondolin-postbuild";
+/** Build log file written into the assets folder when a build fails. */
+const BUILD_LOG_FILE = "build.log";
 
 // Path of the stock image assets, relative to this module.
 export function stockImageDir(): string {
@@ -39,10 +42,10 @@ function stockImageConfigPath(): string {
  */
 export async function resolveImageAssets(
   postBuild: PostBuildResolution | null,
-  onNotice?: (message: string) => void,
+  onLog?: (line: string) => void,
 ): Promise<string> {
   if (!postBuild) return stockImageDir();
-  return ensureCustomImageAssets(postBuild, onNotice);
+  return ensureCustomImageAssets(postBuild, onLog);
 }
 
 // In-process build lock: concurrent launches (e.g. a main VM and a subagent
@@ -51,11 +54,11 @@ const builds = new Map<string, Promise<string>>();
 
 function ensureCustomImageAssets(
   resolution: PostBuildResolution,
-  onNotice?: (message: string) => void,
+  onLog?: (line: string) => void,
 ): Promise<string> {
   const existing = builds.get(resolution.assetDir);
   if (existing) return existing;
-  const promise = doEnsureCustomImageAssets(resolution, onNotice).finally(() =>
+  const promise = doEnsureCustomImageAssets(resolution, onLog).finally(() =>
     builds.delete(resolution.assetDir),
   );
   builds.set(resolution.assetDir, promise);
@@ -64,7 +67,7 @@ function ensureCustomImageAssets(
 
 async function doEnsureCustomImageAssets(
   resolution: PostBuildResolution,
-  onNotice?: (message: string) => void,
+  onLog?: (line: string) => void,
 ): Promise<string> {
   const { postBuild, assetDir } = resolution;
   const baseConfigPath = stockImageConfigPath();
@@ -85,21 +88,76 @@ async function doEnsureCustomImageAssets(
   // postBuild section into the cache dir.
   fs.rmSync(assetDir, { recursive: true, force: true });
   fs.mkdirSync(assetDir, { recursive: true });
-  onNotice?.(
+  onLog?.(
     `gondolin: building custom image (postBuild) into ${assetDir} — this can take a while`,
   );
   const base = parseBuildConfig(fs.readFileSync(baseConfigPath, "utf8"));
   const config: BuildConfig = { ...base, postBuild };
-  await buildAssets(config, {
+  const options: BuildOptions = {
     outputDir: assetDir,
     configDir: path.dirname(baseConfigPath),
-    verbose: false,
-  });
+    verbose: true,
+  };
+  await runBuildWithCapturedLogs(config, options, onLog);
   fs.writeFileSync(hashFile, key);
   // Keep the built assets out of the repo's git history.
   ensureAssetsGitignore(assetDir);
-  onNotice?.(`gondolin: custom image ready at ${assetDir}`);
+  onLog?.(`gondolin: custom image ready at ${assetDir}`);
   return assetDir;
+}
+
+/**
+ * Run buildAssets while capturing its console output, line by line, and
+ * forwarding each line to onLog (so the caller can render it in the TUI).
+ *
+ * The SDK has no log callback: buildAssets and the child processes it
+ * spawns write straight to process.stderr (verbose mode). We temporarily
+ * intercept process.stderr.write, split the output into lines, and swallow
+ * the console output. On failure the captured log is written to
+ * <outputDir>/build.log and the log path is appended to the error message.
+ */
+async function runBuildWithCapturedLogs(
+  config: BuildConfig,
+  options: BuildOptions,
+  onLog?: (line: string) => void,
+): Promise<void> {
+  const originalWrite = process.stderr.write;
+  const lines: string[] = [];
+  let pending = "";
+  process.stderr.write = ((
+    chunk: string | Uint8Array,
+  ): boolean => {
+    pending +=
+      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    const parts = pending.split("\n");
+    pending = parts.pop() ?? "";
+    for (const line of parts) {
+      lines.push(line);
+      onLog?.(line);
+    }
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await buildAssets(config, options);
+  } catch (err) {
+    flushPending();
+    const logPath = path.join(options.outputDir, BUILD_LOG_FILE);
+    fs.mkdirSync(options.outputDir, { recursive: true });
+    fs.writeFileSync(logPath, lines.join("\n"));
+    const failure = err instanceof Error ? err : new Error(String(err));
+    failure.message += `\ngondolin: build log: ${logPath}`;
+    throw failure;
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+  flushPending();
+
+  function flushPending(): void {
+    if (!pending) return;
+    lines.push(pending);
+    onLog?.(pending);
+    pending = "";
+  }
 }
 
 /** Cache key: sha256 over the postBuild section and the stock image config. */

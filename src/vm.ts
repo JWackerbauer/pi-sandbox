@@ -41,7 +41,10 @@ export interface DetachedVmOptions {
    * main VM, so they get less by default.
    */
   isSubagent?: boolean;
-  /** Optional progress notice callback (e.g. for custom image builds). */
+  /**
+   * Optional notice callback: receives progress messages and the custom
+   * image build log, line by line (rendered in the TUI).
+   */
   onNotice?: (message: string) => void;
 }
 
