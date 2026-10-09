@@ -21,10 +21,28 @@ function readConfigFile(file: string): GondolinConfig {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
     if (typeof parsed !== "object" || parsed === null) return {};
-    return parsed as GondolinConfig;
+    const config = parsed as GondolinConfig;
+    config.postStartup = normalizePostStartup(config.postStartup);
+    return config;
   } catch {
     return {};
   }
+}
+
+// `postStartup` should be a list of shell commands, but a hand-written JSON
+// file can hold anything. Normalize it to a string array so an ill-shaped
+// value never crashes the launch: a bare string becomes a one-command list,
+// non-string entries are dropped, and any other value (object, number, null)
+// is treated as unset.
+function normalizePostStartup(value: unknown): string[] | undefined {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    const commands = value.filter(
+      (cmd): cmd is string => typeof cmd === "string",
+    );
+    return commands.length > 0 ? commands : undefined;
+  }
+  return undefined;
 }
 
 function mergeSizing(

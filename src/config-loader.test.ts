@@ -72,6 +72,38 @@ test("project values override global values field by field", () => {
   assert.deepEqual(cfg.subagent, { memory: "512M" });
 });
 
+test("postStartup is normalized to a string array", () => {
+  // A bare string is accepted as a one-command list.
+  let env = makeEnv({ postStartup: "npm install" }, null);
+  let cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.deepEqual(cfg.postStartup, ["npm install"]);
+
+  // A project string overrides the global list wholesale.
+  env = makeEnv(
+    { postStartup: ["echo global"] },
+    { postStartup: "echo project" },
+  );
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.deepEqual(cfg.postStartup, ["echo project"]);
+
+  // Non-string entries are dropped; a list left empty is treated as unset.
+  env = makeEnv({ postStartup: ["echo hi", 42, null] }, null);
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.deepEqual(cfg.postStartup, ["echo hi"]);
+  env = makeEnv({ postStartup: [42, null] }, null);
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.equal(cfg.postStartup, undefined);
+
+  // Any other shape (object, number, null) is treated as unset — it must
+  // never crash a VM launch.
+  env = makeEnv({ postStartup: { a: 1 } }, null);
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.equal(cfg.postStartup, undefined);
+  env = makeEnv({ postStartup: 7 }, null);
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.equal(cfg.postStartup, undefined);
+});
+
 test("postStartup and postBuild are overridden wholesale", () => {
   const { agentDir, localCwd } = makeEnv(
     {
