@@ -409,7 +409,7 @@ export default function (pi: ExtensionAPI) {
       (developMode
         ? `This sandbox is under development. When you are done working, please report any issues you ` +
           `encountered with the sandbox itself (e.g. broken tools, missing packages, unexpected behavior) ` +
-          `so the problems can be fixed.` +
+          `so the problems can be fixed.`
         : ``) +
       (scratchEnabled
         ? ` Two scratch directories persist across VM restarts (they live on the host's temp filesystem, not in git, so they stick around ` +
