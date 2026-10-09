@@ -308,7 +308,7 @@ export function createSubagentManager(
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt: subagentSystemPrompt(record),
+      systemPrompt: subagentSystemPrompt(record, developModeEnabled(localCwd)),
     });
     await loader.reload();
 
@@ -637,7 +637,18 @@ function oneLine(s: string): string {
 
 // ─── Subagent system prompt ─────────────────────────────────────────────
 
-function subagentSystemPrompt(record: InternalRecord): string {
+// Whether the `developMode` config option is enabled, so the subagent is
+// told the sandbox is under development (see config.ts). Config is
+// best-effort; a load failure just disables it.
+function developModeEnabled(localCwd: string): boolean {
+  try {
+    return loadGondolinConfig(localCwd, getAgentDir()).developMode === true;
+  } catch {
+    return false;
+  }
+}
+
+function subagentSystemPrompt(record: InternalRecord, developMode: boolean): string {
   return `You are a subagent of the pi coding agent, running inside a gondolin sandbox. A parent agent spawned you to complete the task given in the user message, on your own work branch.
 
 <tools>
@@ -659,6 +670,9 @@ Your branch was created from ${record.branchStart}. You share the source git rep
 Do not commit to any other branch; do not merge your branch.
 The shared git repository is the ONLY persistence in the sandbox; the rest of the filesystem is ephemeral. You must commit all relevant work to your branch (${record.branch}) otherwise it will be lost.
 </cwd>
+${developMode
+    ? `This sandbox is under development. When you are done working, please report any issues you encountered with the sandbox itself (e.g. broken tools, missing packages, unexpected behavior) in your summary so the problems can be fixed.
 
-When you have finished the task, stop working and end with a short summary of what you did: the changes you made, the commits you created, and any caveats. The parent agent will read this summary and review your branch.`;
+`
+    : ``}When you have finished the task, stop working and end with a short summary of what you did: the changes you made, the commits you created, and any caveats. The parent agent will read this summary and review your branch.`;
 }

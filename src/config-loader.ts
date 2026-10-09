@@ -69,6 +69,9 @@ function mergeConfigs(
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;
   }
+  if (global.developMode !== undefined || project.developMode !== undefined) {
+    merged.developMode = project.developMode ?? global.developMode;
+  }
   if (global.postStartup || project.postStartup) {
     merged.postStartup = project.postStartup ?? global.postStartup;
   }

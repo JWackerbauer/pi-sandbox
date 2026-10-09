@@ -398,13 +398,19 @@ export default function (pi: ExtensionAPI) {
       path.join(os.homedir(), ".pi", "agent"),
     );
     const scratchEnabled = config.scratch !== false;
+    const developMode = config.developMode === true;
     event.systemPromptOptions.sections.cwd =
       `You are working in a gondolin sandbox; cwd: ${sandbox.workspace} (a git worktree owned by you, branch: ` +
       `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
       `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
       `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
       `The shared git repository is the ONLY persistent storage in your workspace; the rest of the filesystem is ephemeral. ` +
-      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.` +
+      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
+      (developMode
+        ? `This sandbox is under development. When you are done working, please report any issues you ` +
+          `encountered with the sandbox itself (e.g. broken tools, missing packages, unexpected behavior) ` +
+          `so the problems can be fixed.` +
+        : ``) +
       (scratchEnabled
         ? ` Two scratch directories persist across VM restarts (they live on the host's temp filesystem, not in git, so they stick around ` +
           `for a while but not forever - do not treat them as permanent storage): ` +

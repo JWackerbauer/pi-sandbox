@@ -128,6 +128,12 @@ export interface GondolinConfig {
    */
   scratch?: boolean;
   /**
+   * Tell the agent that the sandbox is under development and that it should
+   * report any issues it had with the sandbox once it is done working.
+   * Default false.
+   */
+  developMode?: boolean;
+  /**
    * Shell commands run in the agent's workspace (`/<branch>`) after the VM
    * has started up and the worktree is ready, in list order. Each entry is
    * a shell line run via /bin/sh -lc in the guest. Project values override

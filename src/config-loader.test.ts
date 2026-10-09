@@ -44,6 +44,7 @@ test("missing config files yield an empty config", () => {
   assert.equal(cfg.vm, undefined);
   assert.equal(cfg.subagent, undefined);
   assert.equal(cfg.scratch, undefined);
+  assert.equal(cfg.developMode, undefined);
   assert.equal(cfg.postStartup, undefined);
   assert.equal(cfg.postBuild, undefined);
   assert.equal(Object.keys(cfg.secrets ?? {}).length, 0);
@@ -70,6 +71,24 @@ test("project values override global values field by field", () => {
   const cfg = loadGondolinConfig(localCwd, agentDir);
   assert.deepEqual(cfg.vm, { memory: "4G", cpus: 2 });
   assert.deepEqual(cfg.subagent, { memory: "512M" });
+});
+
+test("developMode defaults to off and project overrides global", () => {
+  // Absent in both → undefined (off).
+  const off = makeEnv(null, null);
+  assert.equal(loadGondolinConfig(off.localCwd, off.agentDir).developMode, undefined);
+  // Global true, project unset → true (inherited).
+  const fromGlobal = makeEnv({ developMode: true }, null);
+  assert.equal(
+    loadGondolinConfig(fromGlobal.localCwd, fromGlobal.agentDir).developMode,
+    true,
+  );
+  // Global true, project false → false (project wins).
+  const fromProject = makeEnv({ developMode: true }, { developMode: false });
+  assert.equal(
+    loadGondolinConfig(fromProject.localCwd, fromProject.agentDir).developMode,
+    false,
+  );
 });
 
 test("postStartup is normalized to a string array", () => {
