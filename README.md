@@ -88,9 +88,15 @@ Subagent VMs use smaller sizing by default (see **Configuration** below).
 
 ### Skills
 
-The package bundles `skills/subagents.md`, which pi loads as a `subagents` skill.
-It contains the subagent management instructions (previously in the system prompt)
-and is available to the agent on demand.
+The package bundles two skills that pi loads on demand (so they only cost
+tokens when the agent loads them):
+
+- `skills/subagents.md` — the `subagents` skill: subagent management
+  instructions (spawning, monitoring, aborting, merging), previously in the
+  system prompt.
+- `skills/github.md` — the `github` skill: how to use the `gh` CLI and the
+  `/git` magic dir to access the configured GitHub hosts. Only relevant when
+  the `github` config is present.
 
 ### Configuration
 
@@ -103,6 +109,10 @@ The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondo
   "secrets": {
     "GH_TOKEN": { "hosts": ["github.com"] }
   },
+  "github": [
+    { "host": "github.com", "token": "GH_TOKEN", "magicDir": true },
+    { "host": "myorg.ghe.com", "token": "MYORG_GHE_TOKEN" }
+  ],
   "env": { "NODE_ENV": "development" },
   "scratch": true,
   "postBuild": {
@@ -115,6 +125,7 @@ The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondo
 - **VM sizing** — `vm` sizes the main session's VM (default `1G` / 2 CPUs); `subagent` sizes subagent VMs, which run in parallel next to the main VM and are smaller by default (`512M` / 1 CPU). Values use the guest runner's native syntax (`memory`: qemu syntax like `"512M"`, `"1G"`; `cpus`: integer).
 - **Shared secrets** — `secrets` maps a *name* to a secret config. At VM launch the value is taken from the entry's `value` field if present, otherwise from the host environment variable named by the key, and wired into the guest through Gondolin's secret SDK: the guest only ever sees a placeholder (random, or your `placeholder` if set) and requests carrying the secret may only be sent to the listed `hosts`. Entries with no value in either source are skipped. Prefer the env var — the config file is a less secret place to live. Example: with `GH_TOKEN` set, the guest can authenticate to `github.com` without the token ever appearing in the VM, or inline: `"GH_TOKEN": { "hosts": ["github.com"], "value": "ghp_..." }`.
 - **Environment variables (`env`)** — a map of name → string value, set as environment variables inside the guest VM, visible to every process the agent runs. Non-string values are ignored. The project map is merged with the global map per key, so a project config can override a single variable while inheriting the rest. These are plain values that live in the guest environment unencrypted — don't put secrets here (use `secrets` for those); a key that collides with a `secrets` entry keeps the secret's placeholder value.
+- **GitHub hosts (`github`)** — an opt-in list of GitHub hosts (`github.com` and/or GitHub Enterprise hosts like `myorg.ghe.com`) the agent can access. When at least one entry has a usable token, the `gh` CLI is installed and authenticated for each host inside the guest (the token is written to the guest's `~/.config/gh/hosts.yml`), and the agent is told about them. Each entry's `token` is either a literal token value or the name of a host environment variable that holds it (a set env var takes precedence); entries with no usable token are ignored, so the feature is off unless you configure a token. Entries are merged by host across global and project. Set `"magicDir": true` on a host to also expose its repos as a read-only, lazily-cloned tree under `/git/<host>/<owner>/<repo>` (clones are cached on the host and reused across restarts). How the agent uses `gh` and the magic dir is documented in the bundled `github` skill (see [Skills](#skills)).
 - **Scratch mounts** — two host directories are mounted into every guest so files survive VM/session restarts (they live under the host's tempdir, not in the VM's ephemeral disk):
   - `/scratch` — per-repo, shared by every sandbox session of that repo. Host path: `<tempdir>/gondolin/<repo-key>/scratch`.
   - `/scratch-local` — per-repo *and* per-branch, private to the current work branch. Host path: `<tempdir>/gondolin/<repo-key>/<branch>/scratch`.
@@ -188,7 +199,8 @@ running subagents are aborted and cleaned up.
 | `src/vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
 | `src/subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
 | `src/config.ts` | Guest layout, git identity, limits, session entry type, config contract |
-| `src/config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret resolution |
+| `src/config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret & GitHub host resolution |
+| `src/github.ts` | `gh` install/auth in the guest, the `/git` magic-dir VFS provider, and the GitHub prompt line |
 | `src/branch-name.ts` | Prompt → branch name summarizer and sanitizer |
 | `src/guest-path.ts` | Host path → guest path mapping |
 | `src/ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |

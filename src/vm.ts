@@ -6,25 +6,31 @@ import {
   RealFSProvider,
   createHttpHooks,
 } from "@earendil-works/gondolin";
+import type { VirtualProvider } from "@earendil-works/gondolin";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   computeRepoKey,
   loadGondolinConfig,
   resolvePostBuild,
+  resolveGitHubOrgs,
   resolveSecrets,
 } from "./config-loader";
 import { resolveImageAssets } from "./image";
+import { setupGithubOrgs, MagicGitProvider } from "./github";
 import {
   DEFAULT_SUBAGENT_SIZING,
   DEFAULT_VM_SIZING,
   DEFAULT_WORK_BRANCH,
   guestWorkspace,
   GUEST_GIT_DIR,
+  GUEST_MAGIC_CLONES,
+  GUEST_MAGIC_DIR,
   GUEST_SCRATCH,
   GUEST_SCRATCH_LOCAL,
   GIT_EMAIL,
   GIT_HOOKS_DIR,
   GIT_NAME,
+  hostMagicCloneRoot,
   hostScratchBranch,
   hostScratchShared,
   PREPARE_SCRIPT,
@@ -89,7 +95,7 @@ export async function launchDetachedVm(
   });
   const env = { ...(config.env ?? {}), ...secretsEnv };
 
-  const mounts: Record<string, RealFSProvider> = {
+  const mounts: Record<string, VirtualProvider> = {
     [GUEST_GIT_DIR]: new RealFSProvider(localGitDir),
   };
   if (config.scratch !== false) {
@@ -106,6 +112,43 @@ export async function launchDetachedVm(
     mounts[GUEST_SCRATCH_LOCAL] = new RealFSProvider(hostBranch);
   }
 
+  // GitHub access (opt-in): when at least one configured host has a usable
+  // token, `gh` is installed & authenticated in the guest, and any host with
+  // `magicDir` gets its repos exposed as a read-only tree under GUEST_MAGIC_DIR.
+  const githubOrgs = resolveGitHubOrgs(config);
+  const magicHosts = githubOrgs
+    .filter((org) => org.magicDir)
+    .map((org) => org.host);
+  // The magic-dir provider shells out to `gh` inside the guest via `vm.exec`,
+  // but the VM handle is not available until after VM.create. Wire it up
+  // lazily through this ref (assigned right after VM.create, before the guest
+  // can reach /git).
+  let createdRef: VM | null = null;
+  if (magicHosts.length > 0) {
+    // Clones are written by `gh` (in the guest) into a host-backed temp dir,
+    // which is mounted into the guest at GUEST_MAGIC_CLONES and served
+    // read-only by the magic-dir provider under GUEST_MAGIC_DIR.
+    const repoKey = computeRepoKey(localCwd);
+    const cloneRoot = hostMagicCloneRoot(os.tmpdir(), repoKey);
+    fs.mkdirSync(cloneRoot, { recursive: true });
+    mounts[GUEST_MAGIC_CLONES] = new RealFSProvider(cloneRoot);
+    const execInGuest = (argv: string[]) => {
+      if (!createdRef) {
+        return Promise.reject(new Error("gondolin: VM not ready"));
+      }
+      return createdRef.exec(argv).then((r) => ({
+        stdout: r.stdout,
+        stderr: r.stderr,
+        exitCode: r.exitCode,
+      }));
+    };
+    mounts[GUEST_MAGIC_DIR] = new MagicGitProvider({
+      hosts: magicHosts,
+      cloneRoot,
+      execInGuest,
+    });
+  }
+
   const moduleRoot = path.resolve(__dirname);
   const created = await VM.create({
     sandbox: {
@@ -119,6 +162,8 @@ export async function launchDetachedVm(
       mounts,
     },
   });
+  // The magic-dir provider reaches `gh` through this ref (see above).
+  createdRef = created;
 
   try {
     // Install the prepare script and the git hook into the guest.
@@ -156,6 +201,13 @@ export async function launchDetachedVm(
       throw new Error(
         `gondolin: prepare.sh failed with exit code ${result.exitCode}\n${detail}`,
       );
+    }
+
+    // Install & authenticate the `gh` CLI for the configured GitHub hosts
+    // (opt-in; a no-op when none are configured). Runs before postStartup so
+    // a post-startup command can already use `gh`.
+    if (githubOrgs.length > 0) {
+      await setupGithubOrgs(created, githubOrgs);
     }
 
     // User-defined post-startup commands (config `postStartup`), run in the

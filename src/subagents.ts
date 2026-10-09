@@ -22,6 +22,8 @@ import {
   SUBAGENT_RECENT_TOOL_WINDOW,
   SUBAGENT_STUCK_IDLE_MS,
 } from "./config";
+import { loadGondolinConfig, resolveGitHubOrgs } from "./config-loader";
+import { githubPromptLine } from "./github";
 import { createGondolinBashOps } from "./ops/bash";
 import { createGondolinEditOps } from "./ops/edit";
 import { createGondolinReadOps } from "./ops/read";
@@ -308,7 +310,7 @@ export function createSubagentManager(
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt: subagentSystemPrompt(record, developModeEnabled(localCwd)),
+      systemPrompt: subagentSystemPrompt(record, sandboxExtras(localCwd)),
     });
     await loader.reload();
 
@@ -637,18 +639,34 @@ function oneLine(s: string): string {
 
 // ─── Subagent system prompt ─────────────────────────────────────────────
 
-// Whether the `developMode` config option is enabled, so the subagent is
-// told the sandbox is under development (see config.ts). Config is
-// best-effort; a load failure just disables it.
-function developModeEnabled(localCwd: string): boolean {
+// The optional extras surfaced in a subagent's system prompt: whether
+// `developMode` is on, and a one-line summary of the configured GitHub
+// hosts (empty when the feature is not configured). Config is best-effort;
+// a load failure just disables both.
+function sandboxExtras(localCwd: string): {
+  developMode: boolean;
+  github: string;
+} {
   try {
-    return loadGondolinConfig(localCwd, getAgentDir()).developMode === true;
+    const config = loadGondolinConfig(localCwd, getAgentDir());
+    return {
+      developMode: config.developMode === true,
+      github: githubPromptLine(resolveGitHubOrgs(config)),
+    };
   } catch {
-    return false;
+    return { developMode: false, github: "" };
   }
 }
 
-function subagentSystemPrompt(record: InternalRecord, developMode: boolean): string {
+function subagentSystemPrompt(
+  record: InternalRecord,
+  extras: { developMode: boolean; github: string },
+): string {
+  const github = extras.github
+    ? "\n<github>\n" +
+      extras.github +
+      "\nSee the `github` skill for how to use gh and the magic dir.\n</github>\n"
+    : "";
   return `You are a subagent of the pi coding agent, running inside a gondolin sandbox. A parent agent spawned you to complete the task given in the user message, on your own work branch.
 
 <tools>
@@ -670,9 +688,8 @@ Your branch was created from ${record.branchStart}. You share the source git rep
 Do not commit to any other branch; do not merge your branch.
 The shared git repository is the ONLY persistence in the sandbox; the rest of the filesystem is ephemeral. You must commit all relevant work to your branch (${record.branch}) otherwise it will be lost.
 </cwd>
-${developMode
+${extras.developMode
     ? `This sandbox is under development. When you are done working, please report any issues you encountered with the sandbox itself (e.g. broken tools, missing packages, unexpected behavior) in your summary so the problems can be fixed.
-
-`
-    : ``}When you have finished the task, stop working and end with a short summary of what you did: the changes you made, the commits you created, and any caveats. The parent agent will read this summary and review your branch.`;
+\n`
+    : ``}${github}When you have finished the task, stop working and end with a short summary of what you did: the changes you made, the commits you created, and any caveats. The parent agent will read this summary and review your branch.`;
 }

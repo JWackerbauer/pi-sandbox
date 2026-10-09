@@ -105,6 +105,41 @@ export interface SecretConfig {
 }
 
 /**
+ * A GitHub host the agent can access. When present in the config, the `gh`
+ * CLI is installed and authenticated for it inside the guest, and (when
+ * `magicDir` is set) its repos are exposed as a lazily-cloned magic dir.
+ */
+export interface GitHubOrgConfig {
+  /**
+   * The GitHub host: `github.com` or a GitHub Enterprise host such as
+   * `myorg.ghe.com`.
+   */
+  host: string;
+  /**
+   * Access token for this host. Either a literal token value, or the name
+   * of a host environment variable that holds the token (a set env var takes
+   * precedence over a literal). Entries with no resolvable token are ignored,
+   * so the whole feature is opt-in.
+   */
+  token: string;
+  /**
+   * When true, expose this host's repos as a read-only magic dir under
+   * `GUEST_MAGIC_DIR/<host>/`. Default false.
+   */
+  magicDir?: boolean;
+}
+
+/**
+ * A GitHub host after its token has been resolved (from an env var or a
+ * literal). Only hosts with a usable token are included.
+ */
+export interface ResolvedGitHubOrg {
+  host: string;
+  token: string;
+  magicDir: boolean;
+}
+
+/**
  * The full configurable surface for the gondolin sandbox. Loaded by
  * config-loader.ts from `~/.pi/agent/gondolin.json` (global) merged with
  * `<repo>/.pi/gondolin.json` (project), with secrets sourced from the
@@ -132,6 +167,13 @@ export interface GondolinConfig {
    * entry with no value in either source is skipped.
    */
   secrets?: Record<string, SecretConfig>;
+  /**
+   * GitHub hosts the agent can access (see GitHubOrgConfig). When at least
+   * one entry has a resolvable token, `gh` is installed and authenticated
+   * for each host in the guest. Merged by host (a project entry overrides or
+   * adds a host).
+   */
+  github?: GitHubOrgConfig[];
   /**
    * Enable the per-repo and per-branch scratch mounts (host tempdir →
    * guest). Default true. Set false to disable both.
@@ -178,6 +220,29 @@ export const DEFAULT_SUBAGENT_SIZING: Required<VmSizing> = { memory: "512M", cpu
 export const GUEST_SCRATCH = "/scratch";
 /** Guest mount point for the per-branch scratch dir. */
 export const GUEST_SCRATCH_LOCAL = "/scratch-local";
+
+// ─── Magic git dir ────────────────────────────────────────────────────────
+//
+// When a configured GitHub host has `magicDir` enabled, its repos are
+// browsable as a lazily-cloned, read-only tree mounted in the guest at
+// GUEST_MAGIC_DIR. The layout is `/git/<host>/<owner>/<repo>/...`: the top
+// level lists the enabled hosts, an owner level lists that owner's repos
+// (via `gh repo list`), and a repo level serves the cloned repo's files.
+//
+// Clones are written by `gh repo clone` running *inside the guest* into a
+// host-backed temp dir (GUEST_MAGIC_CLONES is that dir mounted into the
+// guest), which the host-side VFS provider then serves read-only under
+// GUEST_MAGIC_DIR. Because the clone root lives on the host it is reused
+// across VM restarts, so a repo is only cloned once per machine.
+
+/** Guest mount point of the magic git dir (read-only repo browser). */
+export const GUEST_MAGIC_DIR = "/git";
+/**
+ * Guest mount point where `gh` (running in the guest) writes its clones.
+ * Backed by a host temp dir so the host-side magic-dir provider can serve
+ * the cloned files. Keep this out of the way of the agent's workspace.
+ */
+export const GUEST_MAGIC_CLONES = "/var/lib/magic-git";
 /** Host directory name used to scope a repo's scratch under the tempdir. */
 export const SCRATCH_HOST_DIRNAME = "gondolin";
 
@@ -196,4 +261,13 @@ export function hostScratchShared(tempdir: string, repoKey: string): string {
 /** Host path of the per-branch scratch dir. */
 export function hostScratchBranch(tempdir: string, repoKey: string, branch: string): string {
   return `${hostScratchRoot(tempdir, repoKey)}/${branch}/scratch`;
+}
+
+/**
+ * Host path backing the guest's magic-git clone dir (GUEST_MAGIC_CLONES).
+ * Under the per-repo scratch root so it persists across VM restarts and is
+ * unique per repo.
+ */
+export function hostMagicCloneRoot(tempdir: string, repoKey: string): string {
+  return `${hostScratchRoot(tempdir, repoKey)}/magic-git`;
 }

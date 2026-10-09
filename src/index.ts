@@ -22,10 +22,11 @@ import {
   SUBAGENT_STATUS_TYPE,
   type SandboxEntryData,
 } from "./config";
-import { loadGondolinConfig } from "./config-loader";
+import { loadGondolinConfig, resolveGitHubOrgs } from "./config-loader";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
+import { githubPromptLine } from "./github";
 import { createGondolinReadOps } from "./ops/read";
 import { createGondolinWriteOps } from "./ops/write";
 import { createGondolinEditOps } from "./ops/edit";
@@ -386,38 +387,46 @@ export default function (pi: ExtensionAPI) {
     return { operations: createGondolinBashOps(sandbox.vm, localCwd, sandbox.workspace) };
   });
 
-  // Replace the CWD section in the system prompt so the model sees /workspace
-  // and knows that only the git repository is persistent.
+  // Replace the CWD section in the system prompt so the model sees
+  // /workspace and knows that only the git repository is persistent. The
+  // section is kept as short, scannable bullets; detailed how-to for
+  // optional features (subagents, GitHub) lives in on-demand skills so the
+  // always-present prompt stays lean.
   pi.on("before_agent_start", async (event, ctx) => {
     touch(ctx);
     await sandbox.ensureVm(ctx);
-    // Scratch mounts are enabled by default; check the config so the prompt
-    // only advertises them when they are actually mounted (see vm.ts).
+    // Check the config so the prompt only advertises features that are
+    // actually enabled (see vm.ts).
     const config = loadGondolinConfig(
       localCwd,
       path.join(os.homedir(), ".pi", "agent"),
     );
     const scratchEnabled = config.scratch !== false;
     const developMode = config.developMode === true;
-    event.systemPromptOptions.sections.cwd =
-      `You are working in a gondolin sandbox; cwd: ${sandbox.workspace} (a git worktree owned by you, branch: ` +
-      `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
-      `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
-      `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
-      `The shared git repository is the ONLY persistent storage in your workspace; the rest of the filesystem is ephemeral. ` +
-      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
-      (developMode
-        ? `This sandbox is under development. When you are done working, please report any issues you ` +
-          `encountered with the sandbox itself (e.g. broken tools, missing packages, unexpected behavior) ` +
-          `so the problems can be fixed.`
-        : ``) +
-      (scratchEnabled
-        ? ` Two scratch directories persist across VM restarts (they live on the host's temp filesystem, not in git, so they stick around ` +
-          `for a while but not forever - do not treat them as permanent storage): ` +
-          `${GUEST_SCRATCH} is shared with every other session of this repository, so use it only for things that are ` +
-          `universally useful to all of them (e.g. shared caches or downloaded artifacts); ` +
-          `${GUEST_SCRATCH_LOCAL} is private to your branch and can hold anything else (build outputs, temporary data).`
-        : ``);
+    const branch = sandbox.branch ?? DEFAULT_WORK_BRANCH;
+    const githubLine = githubPromptLine(resolveGitHubOrgs(config));
+
+    const lines: string[] = [
+      `You are working in a gondolin sandbox.`,
+      `- cwd: ${sandbox.workspace} \u2014 a git worktree on your branch (${branch}), owned by you.`,
+      `- You share the source git repository with the user, who reviews & merges your changes on their host. Do not commit to any other branch and do not merge your branch \u2014 ask the user to review & merge instead.`,
+      `- The git repository is the ONLY persistent storage; the rest of the filesystem is ephemeral. Commit all relevant work to your branch (${branch}) or it will be lost.`,
+    ];
+    if (scratchEnabled) {
+      lines.push(
+        `- Scratch dirs persist across VM restarts (host temp filesystem \u2014 temporary, not permanent): ` +
+          `${GUEST_SCRATCH} is shared with every session of this repo (only universally useful artifacts, e.g. shared caches or downloaded files); ` +
+          `${GUEST_SCRATCH_LOCAL} is private to your branch (anything else: build outputs, temporary data).`,
+      );
+    }
+    if (githubLine) lines.push(`- ${githubLine}`);
+    if (developMode) {
+      lines.push(
+        `This sandbox is under development. When you are done, report any issues you had with the sandbox itself ` +
+          `(broken tools, missing packages, unexpected behavior) so they can be fixed.`,
+      );
+    }
+    event.systemPromptOptions.sections.cwd = lines.join("\n");
   });
 }
 

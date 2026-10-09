@@ -7,7 +7,9 @@ import path from "node:path";
 import type { SecretDefinition } from "@earendil-works/gondolin";
 import type {
   GondolinConfig,
+  GitHubOrgConfig,
   PostBuildConfig,
+  ResolvedGitHubOrg,
   SecretConfig,
   VmSizing,
 } from "./config";
@@ -24,6 +26,7 @@ function readConfigFile(file: string): GondolinConfig {
     const config = parsed as GondolinConfig;
     config.env = normalizeEnv(config.env);
     config.postStartup = normalizePostStartup(config.postStartup);
+    config.github = normalizeGithub(config.github);
     return config;
   } catch {
     return {};
@@ -43,6 +46,28 @@ function normalizeEnv(value: unknown): Record<string, string> | undefined {
     if (typeof val === "string") env[name] = val;
   }
   return Object.keys(env).length > 0 ? env : undefined;
+}
+
+// `github` should be a list of { host, token, magicDir } objects, but a
+// hand-written JSON file can hold anything. Normalize it so an ill-shaped
+// value never crashes the launch: non-object entries and entries missing a
+// string host/token are dropped, and a non-array value is treated as unset.
+function normalizeGithub(
+  value: unknown,
+): GitHubOrgConfig[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const orgs: GitHubOrgConfig[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.host !== "string" || typeof e.token !== "string") continue;
+    orgs.push({
+      host: e.host,
+      token: e.token,
+      magicDir: e.magicDir === true,
+    });
+  }
+  return orgs.length > 0 ? orgs : undefined;
 }
 
 // `postStartup` should be a list of shell commands, but a hand-written JSON
@@ -79,6 +104,19 @@ function mergeEnv(
   return Object.keys(env).length > 0 ? env : undefined;
 }
 
+// `github` entries are keyed by host, so a project config can add a host or
+// override an existing one (e.g. swap a token) while inheriting the rest.
+function mergeGithub(
+  global: GitHubOrgConfig[] | undefined,
+  project: GitHubOrgConfig[] | undefined,
+): GitHubOrgConfig[] | undefined {
+  if (!global && !project) return undefined;
+  const byHost = new Map<string, GitHubOrgConfig>();
+  for (const entry of global ?? []) byHost.set(entry.host, entry);
+  for (const entry of project ?? []) byHost.set(entry.host, entry);
+  return [...byHost.values()];
+}
+
 // Project values override global values field by field, so a project config
 // can override just `vm.memory` while inheriting `vm.cpus` from the global
 // config. `postStartup` and `postBuild` are overridden wholesale (a project
@@ -92,6 +130,7 @@ function mergeConfigs(
     subagent: mergeSizing(global.subagent, project.subagent),
     secrets: { ...global.secrets, ...project.secrets },
     env: mergeEnv(global.env, project.env),
+    github: mergeGithub(global.github, project.github),
   };
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;
@@ -171,6 +210,31 @@ export function computeRepoKey(localCwd: string): string {
     .digest("hex")
     .slice(0, 8);
   return base ? `${base}-${hash}` : hash;
+}
+
+/**
+ * Resolve the config's `github` list into hosts with a usable token. For each
+ * entry the token comes from `process.env[token]` when that env var is set,
+ * otherwise from the (literal) `token` value itself; entries with no usable
+ * token are skipped, and duplicate hosts are collapsed to the first. The
+ * result is empty when the feature is not configured, so callers can treat a
+ * non-empty list as "the feature is opt-in".
+ */
+export function resolveGitHubOrgs(
+  config: GondolinConfig,
+): ResolvedGitHubOrg[] {
+  const resolved: ResolvedGitHubOrg[] = [];
+  const seen = new Set<string>();
+  for (const entry of config.github ?? []) {
+    const host = entry.host.trim();
+    if (host.length === 0) continue;
+    const token = process.env[entry.token] ?? entry.token;
+    if (!token) continue;
+    if (seen.has(host)) continue;
+    seen.add(host);
+    resolved.push({ host, token, magicDir: entry.magicDir === true });
+  }
+  return resolved;
 }
 
 /**

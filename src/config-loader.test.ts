@@ -9,6 +9,7 @@ import {
   computeRepoKey,
   loadGondolinConfig,
   resolvePostBuild,
+  resolveGitHubOrgs,
   resolveSecrets,
 } from "./config-loader";
 
@@ -275,4 +276,89 @@ test("computeRepoKey is stable and path-sensitive", () => {
   assert.equal(a, b);
   assert.notEqual(a, c);
   assert.match(a, /^[a-z0-9-]+$/);
+});
+
+test("github is normalized to a list of { host, token, magicDir }", () => {
+  // Malformed entries (non-objects, missing host/token) are dropped; a list
+  // left empty is treated as unset.
+  let env = makeEnv(
+    { github: [{ host: "github.com", token: "GH_TOKEN" }, 42, { token: "x" }, null] },
+    null,
+  );
+  let cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.deepEqual(cfg.github, [
+    { host: "github.com", token: "GH_TOKEN", magicDir: false },
+  ]);
+
+  env = makeEnv({ github: [42, null] }, null);
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.equal(cfg.github, undefined);
+
+  // Any non-array shape is treated as unset — it must never crash a launch.
+  for (const bad of [{ host: "a", token: "b" }, "github.com", 7, null]) {
+    env = makeEnv({ github: bad }, null);
+    cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+    assert.equal(cfg.github, undefined);
+  }
+});
+
+test("github merges by host, project overrides/adds", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { github: [{ host: "github.com", token: "GH_A" }] },
+    {
+      github: [
+        { host: "github.com", token: "GH_B" }, // override existing host
+        { host: "myorg.ghe.com", token: "GH_C", magicDir: true }, // add host
+      ],
+    },
+  );
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  assert.deepEqual(cfg.github, [
+    { host: "github.com", token: "GH_B", magicDir: false },
+    { host: "myorg.ghe.com", token: "GH_C", magicDir: true },
+  ]);
+});
+
+test("resolveGitHubOrgs resolves tokens and skips unusable entries", () => {
+  const { agentDir, localCwd } = makeEnv(
+    {
+      github: [
+        { host: "github.com", token: "GH_SET" }, // from env
+        { host: "myorg.ghe.com", token: "GH_UNSET" }, // unset env → literal (kept)
+        { host: "dup.ghe.com", token: "literal-token-1" },
+        { host: "dup.ghe.com", token: "literal-token-2" }, // dup host → first wins
+      ],
+    },
+    null,
+  );
+  process.env.GH_SET = "from-env";
+  delete process.env.GH_UNSET;
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  const resolved = resolveGitHubOrgs(cfg);
+  delete process.env.GH_SET;
+  assert.deepEqual(resolved, [
+    { host: "github.com", token: "from-env", magicDir: false },
+    { host: "myorg.ghe.com", token: "GH_UNSET", magicDir: false },
+    { host: "dup.ghe.com", token: "literal-token-1", magicDir: false },
+  ]);
+});
+
+test("resolveGitHubOrgs treats an unset env var name as a literal token", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { github: [{ host: "github.com", token: "SOME_UNSET_VAR" }] },
+    null,
+  );
+  delete process.env.SOME_UNSET_VAR;
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  // The token is "a set env var name, else a literal" — with the var unset it
+  // falls back to the literal string, so the host is still resolvable.
+  assert.deepEqual(resolveGitHubOrgs(cfg), [
+    { host: "github.com", token: "SOME_UNSET_VAR", magicDir: false },
+  ]);
+});
+
+test("resolveGitHubOrgs returns [] when github is not configured", () => {
+  const { agentDir, localCwd } = makeEnv(null, null);
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  assert.deepEqual(resolveGitHubOrgs(cfg), []);
 });
