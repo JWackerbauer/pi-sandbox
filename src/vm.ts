@@ -298,6 +298,10 @@ export function createSandbox(
     }
     if (vm) await close();
 
+    // The branch is known as soon as the launch starts, so readers (the CWD
+    // system-prompt section, subagent parent-branch lookup) see the correct
+    // branch while the VM is still booting.
+    branch = requested;
     const entry = { branch: requested, promise: doLaunch(requested, ctx) };
     starting = entry;
     try {
@@ -309,6 +313,10 @@ export function createSandbox(
 
   async function ensureVm(ctx?: ExtensionContext): Promise<VM> {
     if (vm) return vm;
+    // A launch is already in flight (e.g. /build-in-sandbox started it in
+    // parallel with the first turn): await that VM rather than starting a
+    // second one for the default branch.
+    if (starting) return starting.promise;
     return launch(DEFAULT_WORK_BRANCH, ctx);
   }
 

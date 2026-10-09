@@ -1,34 +1,22 @@
-import os from "node:os";
-import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { requestBranchName } from "../branch-name";
-import {
-  guestWorkspace,
-  PREWARM_PROMPT_TYPE,
-  PREWARM_REPLY_TYPE,
-  SANDBOX_ENTRY_TYPE,
-  SESSION_NAME_PREFIX,
-} from "../config";
-import { loadGondolinConfig } from "../config-loader";
-import { buildPrewarmSystemPrompt } from "../prompt";
-import { startPrewarm } from "../prewarm";
+import { SANDBOX_ENTRY_TYPE, SESSION_NAME_PREFIX } from "../config";
 import type { GondolinSandbox } from "../vm";
 
 // /build-in-sandbox [prompt]
 //
-// Summarizes the prompt into a branch name with the current model,
-// launches the sandbox VM for that branch, and starts the first agent turn
-// with the user's prompt.
+// Summarizes the prompt into a branch name with the current model, launches
+// the sandbox VM for that branch, and starts the first agent turn with the
+// user's prompt.
 //
-// First-turn pre-warm: the LLM generation for the first turn is started in
-// parallel with the (slow) VM startup (see prewarm.ts). If the speculative
-// completion finishes as a complete pure-text answer, it is handed off to
-// the session as the first turn and no second model call is made; otherwise
-// the normal first turn runs (with a warm provider connection).
+// The VM launch and the first turn are started concurrently: they have no
+// dependency on one another. The model can stream its first response while
+// the VM boots; when the turn needs a tool, the tool wrapper's ensureVm()
+// awaits the in-flight launch (see vm.ts), so the agent loop blocks on the
+// VM exactly as long as necessary.
 export function registerBuildCommand(
   pi: ExtensionAPI,
   sandbox: GondolinSandbox,
-  localCwd: string,
 ): void {
   pi.registerCommand("build-in-sandbox", {
     description:
@@ -69,104 +57,27 @@ export function registerBuildCommand(
         prompt,
       );
 
-      // Pre-warm the model: start the speculative completion for the first
-      // turn NOW, in parallel with the VM startup. It uses the same sandbox
-      // CWD section the real first turn will see (see prompt.ts). The first
-      // provider hit of the session was the branch-name call above, so the
-      // connection is already warm.
-      const prewarm = startPrewarm(
-        model,
-        ctx.modelRegistry,
-        buildPrewarmSystemPrompt(prewarmPromptOptions(localCwd, branch)),
-        prompt,
-      );
-
-      await sandbox.launch(branch, ctx);
-      // Only rename and persist after a successful launch, so a failed
-      // start does not leave the session misnamed or marked as sandboxed.
-      // (If launch threw, the in-flight pre-warm is abandoned; it is
-      // capped and finishes on its own — see prewarm.ts.)
+      // Rename and persist the branch so /resume (and /reload) can relaunch
+      // the sandbox for it. Custom entries are not sent to the LLM.
       pi.setSessionName(SESSION_NAME_PREFIX + branch);
-      // Persist the branch so /resume (and /reload) can relaunch the
-      // sandbox for it. Custom entries are not sent to the LLM.
       pi.appendEntry(SANDBOX_ENTRY_TYPE, { branch });
 
-      // The VM is ready. Wait for the pre-warm to settle (it usually already
-      // has: its output is capped and the VM startup is the slow part).
-      ctx.ui.setStatus(
-        "gondolin",
-        ctx.ui.theme.fg("accent", `gondolin: ${branch} · pre-warming model…`),
-      );
-      const result = await prewarm.done;
-      ctx.ui.setStatus(
-        "gondolin",
-        ctx.ui.theme.fg("accent", `gondolin: ${branch}`),
-      );
+      // Start the first turn and the VM launch concurrently. The model can
+      // stream its response while the VM boots; the first tool call blocks
+      // on the in-flight launch (ensureVm in vm.ts).
+      pi.sendUserMessage(prompt);
 
-      if (result.usable) {
-        // Hand-off: seed the exchange as the session's first turn — the
-        // user's prompt and the pre-generated answer appear in the session
-        // without a second model call. By the time the VM was ready the
-        // answer was usually already complete, so the first turn's model
-        // wait (connection + generation) is eliminated. (Trade-offs:
-        // prewarm.ts.)
-        pi.sendMessage(
-          {
-            customType: PREWARM_PROMPT_TYPE,
-            content: prompt,
-            display: true,
-            details: {},
-          },
-          {},
+      const launch = sandbox.launch(branch, ctx);
+      // Surface a launch failure even if the turn never calls a tool
+      // (otherwise the rejection would go unhandled).
+      launch.catch((err: unknown) => {
+        ctx.ui.notify(
+          `gondolin: VM launch failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          "error",
         );
-        pi.sendMessage(
-          {
-            customType: PREWARM_REPLY_TYPE,
-            content: result.text,
-            display: true,
-            details: { prewarmed: true },
-          },
-          {},
-        );
-      } else {
-        // Fall back to the normal first turn: the agent loop makes its own
-        // model call (with a warm connection), and its response — including
-        // tool calls — is executed for real.
-        pi.sendUserMessage(prompt);
-      }
+      });
     },
   });
-}
-
-// The sandbox options for the pre-warm's system prompt: the work branch's
-// workspace plus the config-driven prompt toggles, matching what the
-// before_agent_start hook (index.ts) will inject for the real turn. Config
-// load failures are best-effort and just disable the optional sections.
-function prewarmPromptOptions(
-  localCwd: string,
-  branch: string,
-): {
-  branch: string;
-  workspace: string;
-  developMode: boolean;
-  scratchEnabled: boolean;
-} {
-  let developMode = false;
-  let scratchEnabled = true;
-  try {
-    const config = loadGondolinConfig(
-      localCwd,
-      path.join(os.homedir(), ".pi", "agent"),
-    );
-    developMode = config.developMode === true;
-    scratchEnabled = config.scratch !== false;
-  } catch {
-    // keep defaults
-  }
-  return {
-    branch,
-    workspace: guestWorkspace(branch),
-    developMode,
-    scratchEnabled,
-  };
 }

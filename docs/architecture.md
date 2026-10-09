@@ -62,16 +62,21 @@ with wrappers that route their file operations into the guest (implementations i
   `createHttpHooks` wires the configured `secrets` in, and `env` entries are merged
   under the secret placeholders so a plain env value can never shadow a secret's
   guest-visible placeholder.
-- **Lazy start** — each wrapped tool calls `sandbox.ensureVm()` first: the VM starts on
-  the first tool call that needs it (default branch `gondolin-test`), or earlier via
-  `/build-in-sandbox` (with the generated branch).
+- **Lazy start** — each wrapped tool calls `sandbox.ensureVm()` first. If the VM is
+  already up it is returned; if a launch is in flight (e.g. started by
+  `/build-in-sandbox` in parallel with the first turn) `ensureVm()` awaits that
+  in-flight launch; only if nothing is running does it launch the default branch
+  `gondolin-test`. This is what lets the first turn stream its response while the VM
+  boots — a tool call blocks on the VM exactly as long as necessary.
 
 The `before_agent_start` hook rewrites the CWD section of the system prompt so the
 model knows it is in `/<branch>` on its own branch, that only the git repository is
 persistent, that it must commit its work to its branch and ask the user to review &
 merge — and, when enabled, that the sandbox is in development mode (`developMode`) and
 that the scratch mounts exist and what they are for (the prompt only advertises the
-scratch mounts when they are actually mounted, i.e. `scratch` is not `false`).
+scratch mounts when they are actually mounted, i.e. `scratch` is not `false`). It does
+**not** await the VM: the branch is known as soon as the launch starts, so the first
+model call can begin while the VM is still booting.
 
 Subagent management instructions are not in the system prompt; they ship as a skill
 (`skills/subagents.md`) that pi loads from this package, so they only cost tokens when
@@ -82,7 +87,10 @@ the agent loads the skill.
 - `createSandbox` (`src/vm.ts`) is a single-VM wrapper: `launch(branch)` returns the
   running VM if it is already for that branch, otherwise closes any other VM and
   launches a fresh one; concurrent launches of the same branch share one in-flight
-  promise. `ensureVm()` launches the default branch if nothing is running.
+  promise. The branch is recorded as soon as a launch starts (so the CWD section and
+  other readers see it while the VM boots). `ensureVm()` returns the running VM if any,
+  otherwise awaits an in-flight launch, and only launches the default branch if nothing
+  is running.
 - `launchDetachedVm` is independent of the wrapper, so several VMs can run at the same
   time (one per branch/worktree) — this is what subagents use.
 - On a failed launch the half-configured VM is closed so a retry starts clean.

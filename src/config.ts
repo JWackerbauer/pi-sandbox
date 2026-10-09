@@ -52,19 +52,6 @@ export const DEFAULT_WORK_BRANCH = "gondolin-test";
 
 // Limits for the branch-name summarizer model call.
 export const SUMMARY_MAX_TOKENS = 32;
-
-// First-turn pre-warm (see prewarm.ts): output cap for the speculative
-// completion that runs in parallel with the VM startup. Kept modest: when
-// the result is not a complete pure-text answer (the common case for coding
-// tasks), the call's cost is a write-off.
-export const PREWARM_MAX_TOKENS = 512;
-
-// Custom session message types used to hand off a usable pre-warm result as
-// the first turn: the user's prompt and the pre-generated answer are seeded
-// into the session as visible custom messages (custom messages are not sent
-// to the LLM, see prewarm.ts for the trade-off).
-export const PREWARM_PROMPT_TYPE = "gondolin.prewarm-prompt";
-export const PREWARM_REPLY_TYPE = "gondolin.prewarm-reply";
 export const BRANCH_NAME_MAX_LENGTH = 40;
 
 // Git identity for commits made inside the guest (attributed to the operator,

@@ -15,14 +15,14 @@ import {
 import { Type } from "@earendil-works/pi-ai";
 import {
   DEFAULT_WORK_BRANCH,
-  guestWorkspace,
+  GUEST_SCRATCH,
+  GUEST_SCRATCH_LOCAL,
   SANDBOX_ENTRY_TYPE,
   SUBAGENT_RESULT_TYPE,
   SUBAGENT_STATUS_TYPE,
   type SandboxEntryData,
 } from "./config";
 import { loadGondolinConfig } from "./config-loader";
-import { buildCwdSection } from "./prompt";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
@@ -150,9 +150,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
-  // pre-warms the model in parallel, and starts the first turn with the
-  // user's prompt.
-  registerBuildCommand(pi, sandbox, localCwd);
+  // and starts the first turn with the user's prompt (concurrently with
+  // the VM launch).
+  registerBuildCommand(pi, sandbox);
 
   // Bring the sandbox back up when a session that ran in the sandbox is
   // started, resumed, reloaded, or forked. /build-in-sandbox persists the
@@ -436,7 +436,10 @@ export default function (pi: ExtensionAPI) {
   // and knows that only the git repository is persistent.
   pi.on("before_agent_start", async (event, ctx) => {
     touch(ctx);
-    await sandbox.ensureVm(ctx);
+    // Do NOT await the VM here: the first turn must be able to start (and
+    // stream its response) while the VM is still booting. The CWD section
+    // only needs the branch, which is known as soon as the launch starts
+    // (see vm.ts). Tool calls gate on the VM via ensureVm() instead.
     // Scratch mounts are enabled by default; check the config so the prompt
     // only advertises them when they are actually mounted (see vm.ts).
     const config = loadGondolinConfig(
@@ -445,16 +448,25 @@ export default function (pi: ExtensionAPI) {
     );
     const scratchEnabled = config.scratch !== false;
     const developMode = config.developMode === true;
-    // The CWD section is built by the shared helper so it stays in sync
-    // with the first-turn pre-warm's system prompt (see prompt.ts).
-    event.systemPromptOptions.sections.cwd = buildCwdSection({
-      branch: sandbox.branch ?? DEFAULT_WORK_BRANCH,
-      workspace:
-        sandbox.workspace ??
-        guestWorkspace(sandbox.branch ?? DEFAULT_WORK_BRANCH),
-      developMode,
-      scratchEnabled,
-    });
+    event.systemPromptOptions.sections.cwd =
+      `You are working in a gondolin sandbox; cwd: ${sandbox.workspace} (a git worktree owned by you, branch: ` +
+      `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
+      `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
+      `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
+      `The shared git repository is the ONLY persistent storage in your workspace; the rest of the filesystem is ephemeral. ` +
+      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n` +
+      (developMode
+        ? `This sandbox is under development. When you are done working, please report any issues you ` +
+          `encountered with the sandbox itself (e.g. broken tools, missing packages, unexpected behavior) ` +
+          `so the problems can be fixed.`
+        : ``) +
+      (scratchEnabled
+        ? ` Two scratch directories persist across VM restarts (they live on the host's temp filesystem, not in git, so they stick around ` +
+          `for a while but not forever - do not treat them as permanent storage): ` +
+          `${GUEST_SCRATCH} is shared with every other session of this repository, so use it only for things that are ` +
+          `universally useful to all of them (e.g. shared caches or downloaded artifacts); ` +
+          `${GUEST_SCRATCH_LOCAL} is private to your branch and can hold anything else (build outputs, temporary data).`
+        : ``);
   });
 }
 
