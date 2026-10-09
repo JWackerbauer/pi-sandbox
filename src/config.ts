@@ -92,9 +92,14 @@ export interface SecretConfig {
   /** Host patterns this secret may be sent to (e.g. ["github.com"]). */
   hosts: string[];
   /**
+   * Literal secret value. When absent the value is read from the host
+   * environment variable named by the map key. Prefer the env var — the
+   * config file is a less secret place to live.
+   */
+  value?: string;
+  /**
    * Guest-visible placeholder. When absent the Gondolin SDK generates a
-   * random placeholder. The real value always comes from an environment
-   * variable on the host, never from a config file.
+   * random placeholder.
    */
   placeholder?: string;
 }
@@ -111,10 +116,10 @@ export interface GondolinConfig {
   /** Sizing for subagent VMs (smaller by default). */
   subagent?: VmSizing;
   /**
-   * Map of environment-variable name → secret config. For each entry the
-   * value is read from `process.env[name]` at VM launch and shared with the
-   * guest only for the listed hosts. An entry whose env var is unset is
-   * skipped.
+   * Map of secret name → secret config. For each entry the value is taken
+   * from the entry's `value` field, falling back to `process.env[name]` at
+   * VM launch, and shared with the guest only for the listed hosts. An
+   * entry with no value in either source is skipped.
    */
   secrets?: Record<string, SecretConfig>;
   /**

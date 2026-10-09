@@ -127,16 +127,16 @@ export function computeRepoKey(localCwd: string): string {
 
 /**
  * Resolve the config's `secrets` map into Gondolin secret definitions. The
- * value of each secret comes from the host environment variable named by the
- * map key; entries whose env var is unset or empty are skipped, so a config
- * file never has to contain (or leak) a real secret.
+ * value of each secret comes from its `value` field when present, otherwise
+ * from the host environment variable named by the map key; entries with no
+ * value in either source are skipped.
  */
 export function resolveSecrets(
   config: GondolinConfig,
 ): Record<string, SecretDefinition> {
   const resolved: Record<string, SecretDefinition> = {};
   for (const [name, entry] of Object.entries(config.secrets ?? {})) {
-    const value = process.env[name];
+    const value = entry.value ?? process.env[name];
     if (!value) continue;
     const def: SecretDefinition = { hosts: entry.hosts, value };
     if (entry.placeholder !== undefined) {

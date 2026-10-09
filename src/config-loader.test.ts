@@ -147,6 +147,42 @@ test("resolveSecrets skips entries whose env var is unset", () => {
   delete process.env.SET_VAR;
 });
 
+test("resolveSecrets prefers a plain value over the env var", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { secrets: { MY_TOKEN: { hosts: ["example.com"], value: "from-config" } } },
+    null,
+  );
+  process.env.MY_TOKEN = "from-env";
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  const resolved = resolveSecrets(cfg);
+  assert.equal(resolved.MY_TOKEN?.value, "from-config");
+  delete process.env.MY_TOKEN;
+});
+
+test("resolveSecrets uses a plain value when the env var is unset", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { secrets: { MY_TOKEN: { hosts: ["example.com"], value: "from-config" } } },
+    null,
+  );
+  delete process.env.MY_TOKEN;
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  const resolved = resolveSecrets(cfg);
+  assert.equal(resolved.MY_TOKEN?.value, "from-config");
+});
+
+test("resolveSecrets skips entries with no value in config or env", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { secrets: { EMPTY: { hosts: ["example.com"], value: "" }, MISSING: { hosts: ["example.com"] } } },
+    null,
+  );
+  delete process.env.EMPTY;
+  delete process.env.MISSING;
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  const resolved = resolveSecrets(cfg);
+  assert.equal(resolved.EMPTY, undefined);
+  assert.equal(resolved.MISSING, undefined);
+});
+
 test("computeRepoKey is stable and path-sensitive", () => {
   const a = computeRepoKey("/tmp/my-repo");
   const b = computeRepoKey("/tmp/my-repo");
