@@ -22,9 +22,9 @@ Inside a git repository, start a sandbox build:
 
 This:
 1. Summarizes your prompt into a kebab-case branch name using the current model.
-2. Launches the Gondolin VM and checks out that branch as a git worktree at `/<branch>` in the guest.
+2. Launches the Gondolin VM and checks out that branch as a git worktree at `/<branch>` in the guest — while the VM boots, the model is pre-warmed for the first turn in parallel (see **First-turn pre-warm** below).
 3. Renames the session to `gondolin: <branch>` (so it's recognizable in `/resume`).
-4. Persists the branch in the session and starts the first agent turn with your prompt.
+4. Persists the branch in the session and starts the first agent turn with your prompt (or seeds the pre-warmed answer directly, if the model already produced a complete one).
 
 You can also just start using tools directly — the VM is started lazily on the first tool
 call, using the default branch `gondolin-test`.
@@ -56,6 +56,31 @@ pi '/build-in-sandbox <what do you want to build?>'
   session's VM.
 
 ## Features & configuration
+
+### First-turn pre-warm
+
+VM startup is the slow part of `/build-in-sandbox`, so the extension starts the LLM
+generation for the first turn **in parallel** with it (`prewarm.ts`): as soon as the
+branch name is known, a speculative completion for the user's prompt is kicked off
+(bounded output, thinking off, same sandbox CWD section the real turn will see —
+`prompt.ts`), while the VM boots in the background.
+
+When the VM is ready, the pre-warm result is handed off:
+
+- **Complete pure-text answer** (no tool calls, not truncated, no error): the user's
+  prompt and the pre-generated answer are seeded into the session as visible messages
+  and **no second model call is made** — the first turn's model wait is eliminated.
+- **Anything else** (the common case for coding tasks: the model wants to call tools):
+  the normal first turn starts with `pi.sendUserMessage`, whose model call benefits
+  from a warm provider connection.
+
+A true hand-off (reusing the in-flight stream as the first turn's model call, with the
+agent loop executing pre-generated tool calls) is not possible with the extension SDK:
+extensions can issue model streams via `modelRegistry.streamSimple`, but there is no API
+to inject a pre-generated assistant message into the agent loop. The trade-offs of the
+approximation (bounded wasted cost on the speculative call, the seeded exchange being
+custom messages that the LLM does not see in later turns) are documented in
+`prewarm.ts`.
 
 ### Subagents
 
