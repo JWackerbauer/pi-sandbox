@@ -4,8 +4,10 @@
 // stock config plus that section, cached under the repo's .pi folder (or
 // the global agent dir for a global-only postBuild).
 
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   buildAssets,
@@ -98,7 +100,46 @@ async function doEnsureCustomImageAssets(
     configDir: path.dirname(baseConfigPath),
     verbose: true,
   };
-  await runBuildWithCapturedLogs(config, options, onLog);
+
+  // Off-Linux, the SDK runs postBuild.commands inside a container (it cannot
+  // execute the aarch64 rootfs's shell natively on macOS). Verify a container
+  // daemon is actually up first, so a missing/stopped Docker fails with a
+  // clear message instead of a cryptic in-container error.
+  const needsContainer =
+    process.platform !== "linux" && (postBuild.commands?.length ?? 0) > 0;
+  if (needsContainer) {
+    const runtime = detectContainerRuntime();
+    if (!runtime) {
+      throw new Error(
+        "gondolin: building a custom image (postBuild.commands) on this host " +
+          "requires a running Docker or Podman daemon, but none was found. " +
+          "Start Docker Desktop (or install/start Podman) and try again.",
+      );
+    }
+    onLog?.(
+      `gondolin: running postBuild in a ${runtime} container (required off-Linux)`,
+    );
+  }
+
+  // On macOS the SDK's container build creates its workdir under os.tmpdir()
+  // (/var/folders/...), which Docker Desktop does not share with its VM — so
+  // the /work volume mount comes up empty and the build dies with "can't open
+  // '/work/build-in-container.sh'". Steer os.tmpdir() (via $TMPDIR) to a
+  // home-dir subfolder, which Docker Desktop always shares, for the build.
+  const macBuildTmp =
+    needsContainer && process.platform === "darwin"
+      ? fs.mkdtempSync(path.join(os.homedir(), ".gondolin-build-tmp-"))
+      : null;
+  const prevTmpdir = process.env.TMPDIR;
+  if (macBuildTmp) process.env.TMPDIR = macBuildTmp;
+  try {
+    await runBuildWithCapturedLogs(config, options, onLog);
+  } finally {
+    if (macBuildTmp) {
+      process.env.TMPDIR = prevTmpdir;
+      fs.rmSync(macBuildTmp, { recursive: true, force: true });
+    }
+  }
   fs.writeFileSync(hashFile, key);
   // Keep the built assets out of the repo's git history.
   ensureAssetsGitignore(assetDir);
@@ -158,6 +199,30 @@ async function runBuildWithCapturedLogs(
     onLog?.(pending);
     pending = "";
   }
+}
+
+/**
+ * Find a container runtime whose daemon is actually up (Docker preferred,
+ * then Podman). Returns the runtime name, or null if none is usable. Both
+ * `docker info` and `podman info` fail when the engine/daemon is not running,
+ * so this distinguishes "installed" from "ready".
+ */
+/**
+ * Find a container runtime whose daemon is actually up (Docker preferred,
+ * then Podman). Returns the runtime name, or null if none is usable. Both
+ * `docker info` and `podman info` fail when the engine/daemon is not running,
+ * so this distinguishes "installed" from "ready".
+ */
+export function detectContainerRuntime(): "docker" | "podman" | null {
+  for (const runtime of ["docker", "podman"] as const) {
+    try {
+      execFileSync(runtime, ["info"], { stdio: "ignore", timeout: 15_000 });
+      return runtime;
+    } catch {
+      // not installed, or daemon not up — try the next one
+    }
+  }
+  return null;
 }
 
 /** Cache key: sha256 over the postBuild section and the stock image config. */
