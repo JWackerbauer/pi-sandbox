@@ -8,6 +8,12 @@ review and merge on the host.
 
 ## Quick start
 
+One time, build the stock guest image (it is not shipped prebuilt):
+
+```sh
+npm run build:basic-image
+```
+
 Inside a git repository, start a sandbox build:
 
 ```
@@ -30,179 +36,147 @@ sandbox (useful for wrapper scripts):
 pi '/build-in-sandbox <what do you want to build?>'
 ```
 
-## How it works
+## Day-to-day
 
-### The guest
+- The status bar shows `gondolin: <branch>` while the sandbox runs, plus the number of
+  running subagents.
+- The agent commits to its own branch (commits carry a `Co-Authored-By: pi-agent`
+  trailer). You review and merge on the host: `git log` / `git diff`, then
+  `git merge <branch>`.
+- Your user `!` bash commands run inside the guest too, so what the agent sees is what
+  you see.
+- The workspace is ephemeral, but two scratch directories persist across VM restarts:
+  `/scratch` (shared by every session of this repo) and `/scratch-local` (private to the
+  current branch). Use them for caches and build outputs, not permanent storage.
+- Resuming a sandbox session (`/resume`, `pi -c`) relaunches the VM for the same branch,
+  so you pick up where you left off. When the session ends, its worktree is removed and
+  the VM is closed — the branch, with its commits, is what stays.
+- Each pi session runs its own VM, so you can work on several branches in parallel across
+  sessions. Launching a different branch *within the same session* replaces that
+  session's VM.
 
-- `image/image.json` defines a basic Alpine image with git, use `npm run build:basic-image` to build it.
-- The host's `.git` directory is mounted into the guest at `/source/.git`.
-- On launch, the extension writes `src/scripts/prepare.sh` and a `prepare-commit-msg` git hook
-  into the guest, then runs `prepare.sh`, which:
-  - configures the guest git identity (`GIT_NAME`/`GIT_EMAIL` from `config.ts`),
-  - points `core.hooksPath` at the installed hooks,
-  - creates the work branch (if it doesn't exist) as a worktree at `/workspace`.
-- The `prepare-commit-msg` hook appends a `Co-Authored-By: pi-agent` trailer to commits.
-
-### Tool redirection
-
-`index.ts` re-registers the four built-in tools (`read`, `write`, `edit`, `bash`) with
-wrappers that transparently route their file operations into the guest:
-
-- File paths are mapped from the host cwd into the guest workspace `/<branch>`
-  (`guest-path.ts`); paths escaping the workspace are rejected.
-- `bash` (including user `!` commands) runs as `/bin/bash -lc` **inside the guest**. The
-  host environment is deliberately not forwarded — it usually contains API keys. Give the
-  guest what it needs via Gondolin's `httpHooks` instead.
-- The VM is started lazily: by `/build-in-sandbox` (with the generated branch) or by the
-  first tool call that needs it (default branch).
-
-The `before_agent_start` hook rewrites the CWD section of the system prompt so the model
-knows it is in `/workspace` on its own branch, that only the git repository is
-persistent, and that it must commit to its branch and ask the user to review & merge.
-
-Subagent management instructions are not in the system prompt; they ship as a skill
-(`skills/subagents.md`) that pi loads from this package, so they only cost tokens when
-the agent loads the skill.
-
-### Sessions
-
-- The guest workspace is `/<branch>`: the host's `.git` is shared by all sandbox
-  guests and git identifies worktrees by path, so the path must be unique per branch
-  to avoid clobbering other sessions' worktrees.
-- The work branch is stored as a custom session entry (`gondolin.sandbox`) — custom
-  entries are not sent to the LLM.
-- On `session_start` (resume, reload, fork), the extension reads that entry and relaunches
-  the sandbox for the same branch, so `pi -c` / `/resume` continues where you left off.
-- On `session_shutdown` the VM is closed.
-
-### Branch naming
-
-`branch-name.ts` asks the current model for a short summary of the build request
-(thinking off, 32-token budget) and sanitizes the answer into a valid branch name
-(lowercase kebab-case, ≤ 40 chars). If the model returns no usable text, it falls back to a
-deterministic name derived from the first words of the prompt.
+## Features & configuration
 
 ### Subagents
 
-Subagent VMs use smaller sizing by default (see **Configuration** below).
+The agent can delegate work to subagents, each running in its own **detached sandbox
+session** (its own VM and work branch, created from the parent's current branch). The
+bundled `subagents` skill (see below) teaches the agent how to use the three tools:
 
-### Skills
+- `spawn_subagent(prompt)` — summarize the prompt into a fresh branch name (suffixed
+  `-2`, `-3`, … if taken), launch a detached VM for it, and run a background pi agent
+  session on the task. Returns as soon as the VM is up, so the parent keeps working and
+  can spawn more subagents in parallel.
+- `subagent_status([id], defer_time?)` — a **non-blocking** check. For running subagents
+  it reports elapsed time, last activity, recent tool calls, and flags ones that appear
+  **stuck** or **looping**. Pass `defer_time` (seconds) to schedule the check in the
+  background — the status arrives as a message after the delay.
+- `subagent_abort(id)` — stop a running subagent (e.g. one flagged as stuck). Its VM and
+  worktree are cleaned up, but **its branch and any commits already made are kept** for
+  review and merge.
 
-The package bundles `skills/subagents.md`, which pi loads as a `subagents` skill.
-It contains the subagent management instructions (previously in the system prompt)
-and is available to the agent on demand.
+When a subagent finishes, its result (summary and commits) is delivered to the parent
+**proactively** as a message that triggers the agent's next turn — the agent does not
+have to poll. On parent shutdown, all running subagents are aborted and cleaned up;
+their branches outlive their VMs. See
+[docs/architecture.md](docs/architecture.md#subagents) for how detached sessions work.
 
-### Configuration
+### The bundled `subagents` skill
 
-The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondolin.json` (global) and `<repo>/.pi/gondolin.json` (project, overrides global field by field). Missing or invalid files are treated as empty. All fields are optional.
+The package ships `skills/subagents.md`, which pi loads as a `subagents` skill: the
+subagent usage guide (spawning, monitoring, aborting, merging) as on-demand skill
+content instead of permanent system prompt, so it only costs tokens when the agent
+loads it.
+
+### Configuration — `gondolin.json`
+
+The extension reads a `gondolin.json` from two places: `~/.pi/agent/gondolin.json`
+(global) and `<repo>/.pi/gondolin.json` (project). The project config overrides the
+global one — sizing and `secrets`/`env` merge field by field, so a project can override
+just `vm.memory` while inheriting `vm.cpus`; `postStartup` and `postBuild` replace the
+global value wholesale. Missing or invalid files are treated as empty. All fields are
+optional:
 
 ```json
 {
   "vm": { "memory": "2G", "cpus": 4 },
   "subagent": { "memory": "512M", "cpus": 1 },
+  "env": { "NODE_ENV": "development" },
   "secrets": {
     "GH_TOKEN": { "hosts": ["github.com"] }
   },
-  "env": { "NODE_ENV": "development" },
   "scratch": true,
+  "developMode": false,
+  "postStartup": ["git submodule update --init"],
   "postBuild": {
+    "copy": [{ "src": "./tool-config", "dest": "/opt/tool-config" }],
     "commands": ["apk add ripgrep", "npm install -g pnpm"]
-  },
-  "postStartup": ["git submodule update --init"]
+  }
 }
 ```
 
-- **VM sizing** — `vm` sizes the main session's VM (default `1G` / 2 CPUs); `subagent` sizes subagent VMs, which run in parallel next to the main VM and are smaller by default (`512M` / 1 CPU). Values use the guest runner's native syntax (`memory`: qemu syntax like `"512M"`, `"1G"`; `cpus`: integer).
-- **Shared secrets** — `secrets` maps a *name* to a secret config. At VM launch the value is taken from the entry's `value` field if present, otherwise from the host environment variable named by the key, and wired into the guest through Gondolin's secret SDK: the guest only ever sees a placeholder (random, or your `placeholder` if set) and requests carrying the secret may only be sent to the listed `hosts`. Entries with no value in either source are skipped. Prefer the env var — the config file is a less secret place to live. Example: with `GH_TOKEN` set, the guest can authenticate to `github.com` without the token ever appearing in the VM, or inline: `"GH_TOKEN": { "hosts": ["github.com"], "value": "ghp_..." }`.
-- **Environment variables (`env`)** — a map of name → string value, set as environment variables inside the guest VM, visible to every process the agent runs. Non-string values are ignored. The project map is merged with the global map per key, so a project config can override a single variable while inheriting the rest. These are plain values that live in the guest environment unencrypted — don't put secrets here (use `secrets` for those); a key that collides with a `secrets` entry keeps the secret's placeholder value.
-- **Scratch mounts** — two host directories are mounted into every guest so files survive VM/session restarts (they live under the host's tempdir, not in the VM's ephemeral disk):
-  - `/scratch` — per-repo, shared by every sandbox session of that repo. Host path: `<tempdir>/gondolin/<repo-key>/scratch`.
-  - `/scratch-local` — per-repo *and* per-branch, private to the current work branch. Host path: `<tempdir>/gondolin/<repo-key>/<branch>/scratch`.
+- **`vm` / `subagent` — VM sizing.** `vm` sizes the main session's VM (default `1G` /
+  2 CPUs); `subagent` sizes subagent VMs, which run in parallel next to the main VM and
+  are smaller by default (`512M` / 1 CPU). Values use the guest runner's native syntax
+  (`memory`: qemu syntax like `"512M"`, `"1G"`; `cpus`: integer).
+- **`secrets` — shared secrets.** Maps a *name* to a secret config. At VM launch the
+  value is taken from the entry's `value` field if present, otherwise from the host
+  environment variable named by the key, and wired into the guest through Gondolin's
+  secret SDK: the guest only ever sees a placeholder (random, or your `placeholder` if
+  set), and requests carrying the secret may only be sent to the listed `hosts`.
+  Entries with no value in either source are skipped. Prefer the env var — the config
+  file is a less secret place to live. Example: with `GH_TOKEN` set, the guest can
+  authenticate to `github.com` without the token ever appearing in the VM.
+- **`env` — environment variables.** A map of name → string value, set inside the guest
+  VM and visible to every process the agent runs. Merged per key with the global map, so
+  a project config can override a single variable while inheriting the rest. These are
+  plain values that live in the guest environment unencrypted — don't put secrets here
+  (use `secrets` for those); a key that collides with a `secrets` entry keeps the
+  secret's placeholder value.
+- **`scratch` — scratch mounts.** Two host directories are mounted into every guest so
+  files survive VM/session restarts (they live under the host's tempdir, not in the
+  VM's ephemeral disk):
+  - `/scratch` — per-repo, shared by every sandbox session of that repo.
+  - `/scratch-local` — per-repo *and* per-branch, private to the current work branch.
 
-  `<repo-key>` is the repo's basename (sanitized to `[a-z0-9-]`) plus the first 8 hex chars of the sha256 of its absolute path, so same-named repos in different locations never collide. Set `"scratch": false` to disable both mounts.
-- **Custom image (`postBuild`)** — a `postBuild` section is baked into a custom image at startup: the stock `image/image.json` config is rebuilt with the section's `commands` run inside the rootfs after package installation (optionally after `copy` entries copy host files in). Use it to bring in the project's dev dependencies — the rootfs is sized to fit what the commands install, so big toolchains don't have to squeeze into the stock image at boot. The built assets are cached and reused across launches, and rebuilt only when the section (or the stock image config) changes. Build output is captured line by line and rendered as TUI notices. If a build fails, the full log is written to `build.log` inside the assets folder. A project-level `postBuild` builds into the repo's `.pi/assets` (a `.pi/.gitignore` is added for the folder, so the image never lands in git history); a global-only `postBuild` builds into `~/.pi/agent/assets` and is shared by every repo.
-  - **macOS note:** on a non-Linux host the `postBuild.commands` step must run inside a container (the aarch64 rootfs's shell can't be executed natively on macOS), so a running **Docker** or **Podman** daemon is required. The extension checks for one up front and fails with a clear message if it's missing, and builds the container's workdir under your home directory so Docker Desktop shares it. The stock image (no `postBuild`) always builds natively and needs no container.
-- **Post-startup commands (`postStartup`)** — a list of shell commands run in the agent's workspace (`/<branch>`) after the VM has started up and the worktree is ready, in list order. A non-zero exit fails the launch with the command output surfaced. The project list overrides the global list wholesale. A single command may also be given as a bare string; other shapes are ignored.
+  Set `"scratch": false` to disable both mounts.
+- **`developMode` — development feedback.** When `true`, the agent is told the sandbox
+  is under development and asked to report any issues it had with the sandbox once it
+  is done working. Default `false`.
+- **`postBuild` — custom image.** Baked into a custom image at startup: the stock
+  `image/image.json` config is rebuilt with the section's `commands` run inside the
+  rootfs after package installation (optionally after `copy` entries copy host files
+  in). Use it to bring in the project's dev dependencies — the rootfs is sized to fit
+  what the commands install, so big toolchains don't have to squeeze into the stock
+  image at boot. Built assets are cached and reused across launches, and rebuilt only
+  when the section (or the stock image config) changes. Build output is rendered as TUI
+  notices; a failed build writes the full log to `build.log` in the assets folder. A
+  project-level `postBuild` builds into the repo's `.pi/assets` (a `.pi/.gitignore` is
+  added, so the image never lands in git history); a global-only `postBuild` builds
+  into `~/.pi/agent/assets` and is shared by every repo.
+  - **macOS note:** off-Linux, the `postBuild.commands` step runs inside a container
+    (the aarch64 rootfs's shell can't be executed natively on macOS), so a running
+    **Docker** or **Podman** daemon is required. The extension checks for one up front
+    and fails with a clear message if it's missing. The stock image (no `postBuild`)
+    always builds natively and needs no container.
+- **`postStartup` — post-startup commands.** A list of shell commands run in the agent's
+  workspace (`/<branch>`) after the VM has started and the worktree is ready, in list
+  order. A non-zero exit fails the launch with the command output surfaced. A single
+  command may also be given as a bare string; other shapes are ignored.
 
-### Subagents
-
-The extension registers two tools that let the agent delegate work to subagents,
-each running in its own **detached sandbox session**. How to use them (spawning,
-monitoring, aborting, merging branches) is documented in the bundled
-`subagents` skill (see [Skills](#skills)):
-
-- `spawn_subagent(prompt)` — same interface as `/build-in-sandbox`: the prompt is
-  summarized into a fresh branch name (suffixed `-2`, `-3`, … if the name is taken),
-  a detached VM is launched for it with the branch created **from the parent's
-  current branch**, and a background pi agent session (SDK, in-memory, no
-  extensions/skills) works on the prompt with its four tools routed into the new
-  guest. The tool returns as soon as the VM is up — the parent keeps working and
-  can spawn more subagents in parallel.
-- `subagent_status([id], defer_time?)` — a **non-blocking** check on spawned
-  subagents. Returns each subagent's state; for running ones it includes
-  elapsed time, last activity, recent tool calls, and heuristics that flag a
-  subagent that appears **stuck** (no recent activity) or **looping**
-  (repeating the same action). It does *not* block: finished subagents report
-  themselves proactively, so this is for monitoring running ones. Passing
-  `defer_time` (seconds) schedules the check in the background — the tool
-  returns immediately and the status is delivered to the agent as a message
-  after the delay, so it can "dispatch a subagent and check on it in 5
-  minutes" without blocking the session.
-- `subagent_abort(id)` — stop a running subagent by id (e.g. one that
-  `subagent_status` flagged as stuck or looping). The subagent's session is
-  aborted and its VM and worktree are cleaned up, but its **branch and any
-  commits already made are kept** for the parent to review and merge. The
-  subagent is recorded as `aborted` (distinct from `failed`), and the usual
-  settlement notice follows once cleanup finishes. If the subagent has already
-  settled, this is a no-op.
-
-**Proactive delivery:** the agent does not have to poll. When a subagent
-finishes, the extension injects its result into the parent session as a custom
-message (`gondolin.subagent-result`) that triggers the agent's next turn —
-queued as a follow-up if the parent is mid-turn, immediate if idle. If the
-agent already fetched that result via `subagent_status`, the notice is
-suppressed.
-
-**Deferred status checks:** `subagent_status` with `defer_time` schedules a
-background status check; when the timer fires, the extension injects the freshly
-computed status into the parent session as a custom message
-(`gondolin.subagent-status`) that triggers the agent's next turn. Pending
-delayed checks are cancelled on session shutdown.
-
-When a subagent finishes, its worktree is removed and its VM is closed, but the
-**branch stays** in the shared repository — that is the persistent artifact.
-The parent agent reviews it (`git log` / `git diff`) and merges it into its own
-branch with `git merge <branch>` (both branches' refs live in the same shared
-`.git`, and merging a branch checked out in another worktree is fine).
-
-Subagent branches are serialized at spawn time (name allocation + worktree
-creation), so concurrent spawns cannot collide. On parent session shutdown all
-running subagents are aborted and cleaned up.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `src/index.ts` | Extension entry point: registers the command, tools, and session hooks |
-| `src/commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
-| `src/vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal |
-| `src/subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
-| `src/config.ts` | Guest layout, git identity, limits, session entry type, config contract |
-| `src/config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret resolution |
-| `src/branch-name.ts` | Prompt → branch name summarizer and sanitizer |
-| `src/guest-path.ts` | Host path → guest path mapping |
-| `src/ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |
-| `src/scripts/prepare.sh` | Guest-side git setup, run on VM launch |
-| `src/scripts/prepare-commit-msg` | Git hook adding the pi-agent co-author trailer |
-| `image/image.json` | Gondolin guest image definition |
+For the design details behind all of this — guest setup, tool redirection, VM
+lifecycle, sessions, subagent internals — see [docs/architecture.md](docs/architecture.md).
 
 ## Notes
 
-- The sandbox is **per session**: each pi session runs its own extension instance and its
-  own VM, so you can work on multiple branches in parallel across sessions. Launching a
-  different branch *within the same session* replaces that session's VM. Subagents are the
-  same idea *within* one session: each gets its own detached VM and branch, running in the
-  background next to the parent's VM.
 - Everything in the guest except the git repository and the scratch mounts (`/scratch`,
-  `/scratch-local`) is ephemeral — the agent is told this and must commit its work to its
-  branch (subagents too; their branches outlive their VMs).
+  `/scratch-local`) is ephemeral — the agent is told this and must commit its work to
+  its branch (subagents too; their branches outlive their VMs).
+
+## See also
+
+- [docs/architecture.md](docs/architecture.md) — how it works: guest setup, tool
+  redirection, VM lifecycle, sessions, subagents, images
+- [skills/subagents.md](skills/subagents.md) — the bundled subagent usage skill
+- [docs/RFC-devcontainer-images-and-makefile.md](docs/RFC-devcontainer-images-and-makefile.md) —
+  deferred feature proposals
