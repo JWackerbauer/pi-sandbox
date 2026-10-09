@@ -28,7 +28,6 @@ import {
   PREPARE_SCRIPT,
 } from "./config";
 import type { CommandHooks } from "./config";
-import type { VM } from "@earendil-works/gondolin";
 
 export interface DetachedVmOptions {
   localCwd: string;
