@@ -22,11 +22,27 @@ function readConfigFile(file: string): GondolinConfig {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
     if (typeof parsed !== "object" || parsed === null) return {};
     const config = parsed as GondolinConfig;
+    config.env = normalizeEnv(config.env);
     config.postStartup = normalizePostStartup(config.postStartup);
     return config;
   } catch {
     return {};
   }
+}
+
+// `env` should be a map of name → string value, but a hand-written JSON file
+// can hold anything. Normalize it so an ill-shaped value never crashes the
+// launch: non-string values are dropped, and any value that is not a plain
+// object (array, string, number, null) is treated as unset.
+function normalizeEnv(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const env: Record<string, string> = {};
+  for (const [name, val] of Object.entries(value)) {
+    if (typeof val === "string") env[name] = val;
+  }
+  return Object.keys(env).length > 0 ? env : undefined;
 }
 
 // `postStartup` should be a list of shell commands, but a hand-written JSON
@@ -53,6 +69,16 @@ function mergeSizing(
   return { ...global, ...project };
 }
 
+// Env maps merge per key (a project config can override one variable while
+// inheriting the rest); the result stays `undefined` when both are empty.
+function mergeEnv(
+  global: Record<string, string> | undefined,
+  project: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const env = { ...global, ...project };
+  return Object.keys(env).length > 0 ? env : undefined;
+}
+
 // Project values override global values field by field, so a project config
 // can override just `vm.memory` while inheriting `vm.cpus` from the global
 // config. `postStartup` and `postBuild` are overridden wholesale (a project
@@ -65,6 +91,7 @@ function mergeConfigs(
     vm: mergeSizing(global.vm, project.vm),
     subagent: mergeSizing(global.subagent, project.subagent),
     secrets: { ...global.secrets, ...project.secrets },
+    env: mergeEnv(global.env, project.env),
   };
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;

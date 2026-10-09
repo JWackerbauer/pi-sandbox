@@ -47,6 +47,7 @@ test("missing config files yield an empty config", () => {
   assert.equal(cfg.developMode, undefined);
   assert.equal(cfg.postStartup, undefined);
   assert.equal(cfg.postBuild, undefined);
+  assert.equal(cfg.env, undefined);
   assert.equal(Object.keys(cfg.secrets ?? {}).length, 0);
 });
 
@@ -173,6 +174,39 @@ test("resolvePostBuild: global-only section builds into <agentDir>/assets, proje
   const globalOnly = resolvePostBuild(l2, g2);
   assert.deepEqual(globalOnly?.postBuild, { commands: ["apk add jq"] });
   assert.equal(globalOnly?.assetDir, path.join(g2, "assets"));
+});
+
+test("env is normalized to a string map", () => {
+  // Non-string values are dropped; a map left empty is treated as unset.
+  let env = makeEnv({ env: { A: "1", B: 2, C: null } }, null);
+  let cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.deepEqual(cfg.env, { A: "1" });
+
+  env = makeEnv({ env: { B: 2, C: null } }, null);
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.equal(cfg.env, undefined);
+
+  // Any other shape (array, string, number, null) is treated as unset — it
+  // must never crash a VM launch.
+  for (const bad of [{}, ["A=1"], "A=1", 7, null]) {
+    env = makeEnv({ env: bad }, null);
+    cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+    assert.equal(cfg.env, undefined);
+  }
+
+  // An empty object is treated as unset.
+  env = makeEnv({ env: {} }, null);
+  cfg = loadGondolinConfig(env.localCwd, env.agentDir);
+  assert.equal(cfg.env, undefined);
+});
+
+test("env merges per key, project overrides global", () => {
+  const { agentDir, localCwd } = makeEnv(
+    { env: { A: "global", B: "global" } },
+    { env: { B: "project", C: "project" } },
+  );
+  const cfg = loadGondolinConfig(localCwd, agentDir);
+  assert.deepEqual(cfg.env, { A: "global", B: "project", C: "project" });
 });
 
 test("secrets merge per key", () => {

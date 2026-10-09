@@ -82,9 +82,12 @@ export async function launchDetachedVm(
   // Shared secrets: values come from the host environment, the guest only
   // ever sees placeholders, and requests may only be sent to the hosts
   // listed in the config (see config-loader.ts / Gondolin secret SDK).
-  const { httpHooks, env } = createHttpHooks({
+  // User-defined `env` entries are merged under the secret placeholders, so
+  // an env entry can never shadow a secret's guest-visible placeholder.
+  const { httpHooks, env: secretsEnv } = createHttpHooks({
     secrets: resolveSecrets(config),
   });
+  const env = { ...(config.env ?? {}), ...secretsEnv };
 
   const mounts: Record<string, RealFSProvider> = {
     [GUEST_GIT_DIR]: new RealFSProvider(localGitDir),

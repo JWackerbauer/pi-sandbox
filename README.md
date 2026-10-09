@@ -103,6 +103,7 @@ The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondo
   "secrets": {
     "GH_TOKEN": { "hosts": ["github.com"] }
   },
+  "env": { "NODE_ENV": "development" },
   "scratch": true,
   "postBuild": {
     "commands": ["apk add ripgrep", "npm install -g pnpm"]
@@ -113,6 +114,7 @@ The extension reads a `gondolin.json` config from two places: `~/.pi/agent/gondo
 
 - **VM sizing** — `vm` sizes the main session's VM (default `1G` / 2 CPUs); `subagent` sizes subagent VMs, which run in parallel next to the main VM and are smaller by default (`512M` / 1 CPU). Values use the guest runner's native syntax (`memory`: qemu syntax like `"512M"`, `"1G"`; `cpus`: integer).
 - **Shared secrets** — `secrets` maps a *name* to a secret config. At VM launch the value is taken from the entry's `value` field if present, otherwise from the host environment variable named by the key, and wired into the guest through Gondolin's secret SDK: the guest only ever sees a placeholder (random, or your `placeholder` if set) and requests carrying the secret may only be sent to the listed `hosts`. Entries with no value in either source are skipped. Prefer the env var — the config file is a less secret place to live. Example: with `GH_TOKEN` set, the guest can authenticate to `github.com` without the token ever appearing in the VM, or inline: `"GH_TOKEN": { "hosts": ["github.com"], "value": "ghp_..." }`.
+- **Environment variables (`env`)** — a map of name → string value, set as environment variables inside the guest VM, visible to every process the agent runs. Non-string values are ignored. The project map is merged with the global map per key, so a project config can override a single variable while inheriting the rest. These are plain values that live in the guest environment unencrypted — don't put secrets here (use `secrets` for those); a key that collides with a `secrets` entry keeps the secret's placeholder value.
 - **Scratch mounts** — two host directories are mounted into every guest so files survive VM/session restarts (they live under the host's tempdir, not in the VM's ephemeral disk):
   - `/scratch` — per-repo, shared by every sandbox session of that repo. Host path: `<tempdir>/gondolin/<repo-key>/scratch`.
   - `/scratch-local` — per-repo *and* per-branch, private to the current work branch. Host path: `<tempdir>/gondolin/<repo-key>/<branch>/scratch`.

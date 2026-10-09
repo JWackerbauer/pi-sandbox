@@ -109,12 +109,22 @@ export interface SecretConfig {
  * config-loader.ts from `~/.pi/agent/gondolin.json` (global) merged with
  * `<repo>/.pi/gondolin.json` (project), with secrets sourced from the
  * process environment.
+ *
+ * `env` entries are plain (non-secret) environment values: they live in the
+ * guest's environment unencrypted and must not be used for secrets — use
+ * `secrets` for those.
  */
 export interface GondolinConfig {
   /** Sizing for the main session VM. */
   vm?: VmSizing;
   /** Sizing for subagent VMs (smaller by default). */
   subagent?: VmSizing;
+  /**
+   * Environment variables set inside the guest VM, visible to every process
+   * the agent runs. Merged per key with the global config; a key that also
+   * appears in `secrets` keeps the secret's placeholder value.
+   */
+  env?: Record<string, string>;
   /**
    * Map of secret name → secret config. For each entry the value is taken
    * from the entry's `value` field, falling back to `process.env[name]` at
