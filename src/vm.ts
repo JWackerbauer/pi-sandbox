@@ -101,6 +101,20 @@ export async function launchDetachedVm(
   // each secret's placeholder (in hosts.yml and its env var); the http
   // hooks substitute the real token at egress.
   const ghCliHosts = resolveGhCliHosts(config);
+  // Surface gh CLI entries that were configured but not resolvable (e.g. the
+  // env var named by `ghCliToken` is not set in the process that started pi,
+  // or is a sourced-but-not-exported shell variable) — otherwise the feature
+  // is silently off and the guest has no `gh`.
+  for (const entry of config.github ?? []) {
+    if (entry.ghCliToken === undefined) continue;
+    const host = entry.host.trim();
+    if (!host || ghCliHosts.some((h) => h.host === host)) continue;
+    opts.onNotice?.(
+      `gondolin: gh CLI not enabled for ${host}: the token ` +
+        `'${entry.ghCliToken}' is not resolvable. If it names an environment ` +
+        `variable, make sure it is exported in the shell that starts pi.`,
+    );
+  }
   const ghCliSecrets: Record<string, SecretDefinition> = {};
   for (const h of ghCliHosts) {
     ghCliSecrets[ghCliSecretName(h.host)] = { hosts: [h.host], value: h.token };
