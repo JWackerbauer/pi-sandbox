@@ -6,24 +6,29 @@ import {
   RealFSProvider,
   createHttpHooks,
 } from "@earendil-works/gondolin";
-import type { VirtualProvider } from "@earendil-works/gondolin";
+import type { VirtualProvider, SecretDefinition } from "@earendil-works/gondolin";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   computeRepoKey,
   loadGondolinConfig,
   resolvePostBuild,
-  resolveGitHubOrgs,
+  resolveMagicDirHosts,
+  resolveGhCliHosts,
   resolveSecrets,
 } from "./config-loader";
 import { resolveImageAssets } from "./image";
-import { setupGithubOrgs, MagicGitProvider } from "./github";
+import {
+  checkHostGhAuth,
+  setupGhCli,
+  MagicGitProvider,
+} from "./github";
 import {
   DEFAULT_SUBAGENT_SIZING,
   DEFAULT_VM_SIZING,
   DEFAULT_WORK_BRANCH,
+  ghCliSecretName,
   guestWorkspace,
   GUEST_GIT_DIR,
-  GUEST_MAGIC_CLONES,
   GUEST_MAGIC_DIR,
   GUEST_SCRATCH,
   GUEST_SCRATCH_LOCAL,
@@ -90,8 +95,18 @@ export async function launchDetachedVm(
   // listed in the config (see config-loader.ts / Gondolin secret SDK).
   // User-defined `env` entries are merged under the secret placeholders, so
   // an env entry can never shadow a secret's guest-visible placeholder.
+  //
+  // The gh CLI tokens are shared as secrets too: one per configured host,
+  // with egress restricted to exactly that host. The guest only ever sees
+  // each secret's placeholder (in hosts.yml and its env var); the http
+  // hooks substitute the real token at egress.
+  const ghCliHosts = resolveGhCliHosts(config);
+  const ghCliSecrets: Record<string, SecretDefinition> = {};
+  for (const h of ghCliHosts) {
+    ghCliSecrets[ghCliSecretName(h.host)] = { hosts: [h.host], value: h.token };
+  }
   const { httpHooks, env: secretsEnv } = createHttpHooks({
-    secrets: resolveSecrets(config),
+    secrets: { ...resolveSecrets(config), ...ghCliSecrets },
   });
   const env = { ...(config.env ?? {}), ...secretsEnv };
 
@@ -112,41 +127,19 @@ export async function launchDetachedVm(
     mounts[GUEST_SCRATCH_LOCAL] = new RealFSProvider(hostBranch);
   }
 
-  // GitHub access (opt-in): when at least one configured host has a usable
-  // token, `gh` is installed & authenticated in the guest, and any host with
-  // `magicDir` gets its repos exposed as a read-only tree under GUEST_MAGIC_DIR.
-  const githubOrgs = resolveGitHubOrgs(config);
-  const magicHosts = githubOrgs
-    .filter((org) => org.magicDir)
-    .map((org) => org.host);
-  // The magic-dir provider shells out to `gh` inside the guest via `vm.exec`,
-  // but the VM handle is not available until after VM.create. Wire it up
-  // lazily through this ref (assigned right after VM.create, before the guest
-  // can reach /git).
-  let createdRef: VM | null = null;
+  // GitHub magic dir (opt-in, host-side): repos of the enabled hosts are
+  // served read-only under GUEST_MAGIC_DIR. The host's own `gh`
+  // (authenticated via `gh auth login`) lists repos and clones them into a
+  // host temp dir, which the provider serves — no guest RPC and no token
+  // ever enter the guest.
+  const magicHosts = resolveMagicDirHosts(config);
   if (magicHosts.length > 0) {
-    // Clones are written by `gh` (in the guest) into a host-backed temp dir,
-    // which is mounted into the guest at GUEST_MAGIC_CLONES and served
-    // read-only by the magic-dir provider under GUEST_MAGIC_DIR.
+    // Fail early with an actionable message when the host can't serve it.
+    await checkHostGhAuth(magicHosts);
     const repoKey = computeRepoKey(localCwd);
     const cloneRoot = hostMagicCloneRoot(os.tmpdir(), repoKey);
     fs.mkdirSync(cloneRoot, { recursive: true });
-    mounts[GUEST_MAGIC_CLONES] = new RealFSProvider(cloneRoot);
-    const execInGuest = (argv: string[]) => {
-      if (!createdRef) {
-        return Promise.reject(new Error("gondolin: VM not ready"));
-      }
-      return createdRef.exec(argv).then((r) => ({
-        stdout: r.stdout,
-        stderr: r.stderr,
-        exitCode: r.exitCode,
-      }));
-    };
-    mounts[GUEST_MAGIC_DIR] = new MagicGitProvider({
-      hosts: magicHosts,
-      cloneRoot,
-      execInGuest,
-    });
+    mounts[GUEST_MAGIC_DIR] = new MagicGitProvider({ hosts: magicHosts, cloneRoot });
   }
 
   const moduleRoot = path.resolve(__dirname);
@@ -162,8 +155,6 @@ export async function launchDetachedVm(
       mounts,
     },
   });
-  // The magic-dir provider reaches `gh` through this ref (see above).
-  createdRef = created;
 
   try {
     // Install the prepare script and the git hook into the guest.
@@ -203,11 +194,20 @@ export async function launchDetachedVm(
       );
     }
 
-    // Install & authenticate the `gh` CLI for the configured GitHub hosts
-    // (opt-in; a no-op when none are configured). Runs before postStartup so
-    // a post-startup command can already use `gh`.
-    if (githubOrgs.length > 0) {
-      await setupGithubOrgs(created, githubOrgs);
+    // Install & authenticate the `gh` CLI in the guest for the configured
+    // hosts (opt-in; a no-op when none are configured). The token for each
+    // host travels as a Gondolin secret: hosts.yml carries the secret's
+    // placeholder, and the http hooks substitute the real token at egress,
+    // restricted to that host. Runs before postStartup so a post-startup
+    // command can already use `gh`.
+    if (ghCliHosts.length > 0) {
+      await setupGhCli(
+        created,
+        ghCliHosts.map((h) => ({
+          host: h.host,
+          placeholder: secretsEnv[ghCliSecretName(h.host)] ?? "",
+        })),
+      );
     }
 
     // User-defined post-startup commands (config `postStartup`), run in the

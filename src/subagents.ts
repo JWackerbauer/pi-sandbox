@@ -22,7 +22,7 @@ import {
   SUBAGENT_RECENT_TOOL_WINDOW,
   SUBAGENT_STUCK_IDLE_MS,
 } from "./config";
-import { loadGondolinConfig, resolveGitHubOrgs } from "./config-loader";
+import { loadGondolinConfig, resolveMagicDirHosts, resolveGhCliHosts } from "./config-loader";
 import { githubPromptLine } from "./github";
 import { createGondolinBashOps } from "./ops/bash";
 import { createGondolinEditOps } from "./ops/edit";
@@ -651,7 +651,10 @@ function sandboxExtras(localCwd: string): {
     const config = loadGondolinConfig(localCwd, getAgentDir());
     return {
       developMode: config.developMode === true,
-      github: githubPromptLine(resolveGitHubOrgs(config)),
+      github: githubPromptLine(
+        resolveMagicDirHosts(config),
+        resolveGhCliHosts(config).map((h) => h.host),
+      ),
     };
   } catch {
     return { developMode: false, github: "" };

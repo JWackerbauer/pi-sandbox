@@ -8,8 +8,8 @@ import type { SecretDefinition } from "@earendil-works/gondolin";
 import type {
   GondolinConfig,
   GitHubOrgConfig,
+  GhCliHost,
   PostBuildConfig,
-  ResolvedGitHubOrg,
   SecretConfig,
   VmSizing,
 } from "./config";
@@ -48,10 +48,11 @@ function normalizeEnv(value: unknown): Record<string, string> | undefined {
   return Object.keys(env).length > 0 ? env : undefined;
 }
 
-// `github` should be a list of { host, token, magicDir } objects, but a
+// `github` should be a list of { host, magicDir, ghCliToken } objects, but a
 // hand-written JSON file can hold anything. Normalize it so an ill-shaped
 // value never crashes the launch: non-object entries and entries missing a
-// string host/token are dropped, and a non-array value is treated as unset.
+// string host are dropped, entries that enable neither feature are dropped,
+// and a non-array value is treated as unset.
 function normalizeGithub(
   value: unknown,
 ): GitHubOrgConfig[] | undefined {
@@ -60,11 +61,13 @@ function normalizeGithub(
   for (const entry of value) {
     if (typeof entry !== "object" || entry === null) continue;
     const e = entry as Record<string, unknown>;
-    if (typeof e.host !== "string" || typeof e.token !== "string") continue;
+    if (typeof e.host !== "string") continue;
+    // An entry must enable at least one of the two features.
+    if (e.magicDir !== true && typeof e.ghCliToken !== "string") continue;
     orgs.push({
       host: e.host,
-      token: e.token,
       magicDir: e.magicDir === true,
+      ghCliToken: typeof e.ghCliToken === "string" ? e.ghCliToken : undefined,
     });
   }
   return orgs.length > 0 ? orgs : undefined;
@@ -213,26 +216,54 @@ export function computeRepoKey(localCwd: string): string {
 }
 
 /**
- * Resolve the config's `github` list into hosts with a usable token. For each
- * entry the token comes from `process.env[token]` when that env var is set,
- * otherwise from the (literal) `token` value itself; entries with no usable
- * token are skipped, and duplicate hosts are collapsed to the first. The
- * result is empty when the feature is not configured, so callers can treat a
- * non-empty list as "the feature is opt-in".
+ * The hosts with `magicDir` enabled. These are served host-side (the host's
+ * own `gh` authentication is used; no config token is involved), so every
+ * enabled host is usable. Duplicate hosts are collapsed to the first.
  */
-export function resolveGitHubOrgs(
-  config: GondolinConfig,
-): ResolvedGitHubOrg[] {
-  const resolved: ResolvedGitHubOrg[] = [];
+export function resolveMagicDirHosts(config: GondolinConfig): string[] {
+  const hosts: string[] = [];
   const seen = new Set<string>();
   for (const entry of config.github ?? []) {
     const host = entry.host.trim();
-    if (host.length === 0) continue;
-    const token = process.env[entry.token] ?? entry.token;
-    if (!token) continue;
+    if (host.length === 0 || !entry.magicDir) continue;
     if (seen.has(host)) continue;
     seen.add(host);
-    resolved.push({ host, token, magicDir: entry.magicDir === true });
+    hosts.push(host);
+  }
+  return hosts;
+}
+
+// The shape of an env var name (uppercase identifier), which is not a
+// plausible literal token. Used to detect an entry whose `ghCliToken` is an
+// *unset* env var name: such an entry is skipped rather than the name being
+// used as the token literal (which would authenticate as the literal string
+// and fail with 401, e.g. a token sourced into a shell but not exported).
+const ENV_VAR_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * Resolve the config's `ghCliToken` entries into hosts with a usable token.
+ * For each entry the token comes from `process.env[ghCliToken]` when that
+ * env var is set, otherwise from the (literal) `ghCliToken` value itself.
+ * A value that looks like an env var name whose var is unset is treated as
+ * unresolvable and skipped (so a non-exported shell variable fails loudly
+ * at the config level instead of as a 401 deep in the guest). Entries with
+ * no usable token are skipped, and duplicate hosts are collapsed to the
+ * first. The result is empty when the feature is not configured, so callers
+ * can treat a non-empty list as "the feature is opt-in".
+ */
+export function resolveGhCliHosts(config: GondolinConfig): GhCliHost[] {
+  const resolved: GhCliHost[] = [];
+  const seen = new Set<string>();
+  for (const entry of config.github ?? []) {
+    const host = entry.host.trim();
+    if (host.length === 0 || entry.ghCliToken === undefined) continue;
+    const envValue = process.env[entry.ghCliToken];
+    const token = envValue ?? entry.ghCliToken;
+    if (!token) continue;
+    if (envValue === undefined && ENV_VAR_NAME_RE.test(token)) continue;
+    if (seen.has(host)) continue;
+    seen.add(host);
+    resolved.push({ host, token });
   }
   return resolved;
 }

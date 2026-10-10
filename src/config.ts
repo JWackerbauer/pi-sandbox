@@ -105,9 +105,12 @@ export interface SecretConfig {
 }
 
 /**
- * A GitHub host the agent can access. When present in the config, the `gh`
- * CLI is installed and authenticated for it inside the guest, and (when
- * `magicDir` is set) its repos are exposed as a lazily-cloned magic dir.
+ * A GitHub host entry in the config. Two independent opt-in features:
+ * - `magicDir`: expose the host's repos as a read-only, lazily-cloned magic
+ *   dir (host-side; uses the host's own `gh` authentication).
+ * - `ghCliToken`: install & authenticate the `gh` CLI for this host inside
+ *   the guest (the token is shared with the guest as a Gondolin secret with
+ *   egress restricted to this host).
  */
 export interface GitHubOrgConfig {
   /**
@@ -116,27 +119,37 @@ export interface GitHubOrgConfig {
    */
   host: string;
   /**
-   * Access token for this host. Either a literal token value, or the name
-   * of a host environment variable that holds the token (a set env var takes
-   * precedence over a literal). Entries with no resolvable token are ignored,
-   * so the whole feature is opt-in.
-   */
-  token: string;
-  /**
    * When true, expose this host's repos as a read-only magic dir under
-   * `GUEST_MAGIC_DIR/<host>/`. Default false.
+   * `GUEST_MAGIC_DIR/<host>/`. Uses the host machine's `gh` authentication
+   * (`gh auth login`), no token in the config. Default false.
    */
   magicDir?: boolean;
+  /**
+   * When set, install & authenticate the `gh` CLI for this host in the
+   * guest. Either a literal token value, or the name of a host environment
+   * variable that holds the token (a set env var takes precedence over a
+   * literal; an unset env-var-name entry is skipped). The token is passed
+   * to the guest as a secret with egress restricted to this host.
+   */
+  ghCliToken?: string;
 }
 
 /**
- * A GitHub host after its token has been resolved (from an env var or a
+ * A GitHub host with its gh CLI token resolved (from an env var or a
  * literal). Only hosts with a usable token are included.
  */
-export interface ResolvedGitHubOrg {
+export interface GhCliHost {
   host: string;
   token: string;
-  magicDir: boolean;
+}
+
+/**
+ * Guest-visible env var name (Gondolin secret name) carrying the gh CLI
+ * token for a host. The guest only ever sees the secret's placeholder in
+ * this var; the real value is substituted at egress by the http hooks.
+ */
+export function ghCliSecretName(host: string): string {
+  return `GONDOLIN_GH_CLI_${host.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
 }
 
 /**
@@ -168,10 +181,12 @@ export interface GondolinConfig {
    */
   secrets?: Record<string, SecretConfig>;
   /**
-   * GitHub hosts the agent can access (see GitHubOrgConfig). When at least
-   * one entry has a resolvable token, `gh` is installed and authenticated
-   * for each host in the guest. Merged by host (a project entry overrides or
-   * adds a host).
+   * GitHub hosts the agent can access (see GitHubOrgConfig). Two
+   * independent opt-in features per host: `magicDir` (host-side read-only
+   * repo browser under GUEST_MAGIC_DIR, using the host's own `gh`
+   * authentication) and `ghCliToken` (installs & authenticates the `gh`
+   * CLI in the guest, token shared as a secret with egress restricted to
+   * the host). Merged by host (a project entry overrides or adds a host).
    */
   github?: GitHubOrgConfig[];
   /**
@@ -229,20 +244,14 @@ export const GUEST_SCRATCH_LOCAL = "/scratch-local";
 // level lists the enabled hosts, an owner level lists that owner's repos
 // (via `gh repo list`), and a repo level serves the cloned repo's files.
 //
-// Clones are written by `gh repo clone` running *inside the guest* into a
-// host-backed temp dir (GUEST_MAGIC_CLONES is that dir mounted into the
-// guest), which the host-side VFS provider then serves read-only under
-// GUEST_MAGIC_DIR. Because the clone root lives on the host it is reused
-// across VM restarts, so a repo is only cloned once per machine.
+// All of this runs *on the host*: the host's own `gh` (authenticated via
+// `gh auth login`) lists repos and clones them into a host temp dir, which
+// the host-side VFS provider serves read-only under GUEST_MAGIC_DIR. The
+// guest never sees the token. Because the clone root lives on the host it
+// is reused across VM restarts, so a repo is only cloned once per machine.
 
 /** Guest mount point of the magic git dir (read-only repo browser). */
 export const GUEST_MAGIC_DIR = "/git";
-/**
- * Guest mount point where `gh` (running in the guest) writes its clones.
- * Backed by a host temp dir so the host-side magic-dir provider can serve
- * the cloned files. Keep this out of the way of the agent's workspace.
- */
-export const GUEST_MAGIC_CLONES = "/var/lib/magic-git";
 /** Host directory name used to scope a repo's scratch under the tempdir. */
 export const SCRATCH_HOST_DIRNAME = "gondolin";
 
@@ -264,9 +273,9 @@ export function hostScratchBranch(tempdir: string, repoKey: string, branch: stri
 }
 
 /**
- * Host path backing the guest's magic-git clone dir (GUEST_MAGIC_CLONES).
- * Under the per-repo scratch root so it persists across VM restarts and is
- * unique per repo.
+ * Host path backing the magic-git clone dir (served read-only under
+ * GUEST_MAGIC_DIR by the host-side provider). Under the per-repo scratch
+ * root so it persists across VM restarts and is unique per repo.
  */
 export function hostMagicCloneRoot(tempdir: string, repoKey: string): string {
   return `${hostScratchRoot(tempdir, repoKey)}/magic-git`;

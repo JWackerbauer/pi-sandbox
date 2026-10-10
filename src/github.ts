@@ -1,12 +1,27 @@
-// GitHub access for the sandbox: install & authenticate the `gh` CLI for the
-// configured hosts (github.com and/or GitHub Enterprise hosts), and expose a
-// host's repos as a lazily-cloned, read-only "magic" dir under /git.
+// GitHub access for the sandbox, split into two independent features:
 //
-// See config.ts (GitHubOrgConfig / ResolvedGitHubOrg) and config-loader.ts
-// (resolveGitHubOrgs) for how the configured hosts and tokens are resolved.
+// 1. Magic dir (host-side): the host's own `gh` (authenticated via
+//    `gh auth login`) lists repos and lazily clones them into a host temp
+//    dir, which MagicGitProvider serves read-only under /git in the guest.
+//    The guest never sees a token. Mirrors the SDK's magic-git example:
+//    all `gh` work happens on the host, so no guest RPC is ever awaited
+//    while a clone writes through a host-backed mount (that would deadlock).
+//
+// 2. gh CLI (guest-side): when `ghCliToken` is configured for a host, the
+//    `gh` CLI is installed in the guest and authenticated through a
+//    Gondolin secret (the guest only ever sees the secret's placeholder;
+//    egress is restricted to the host). hosts.yml is generated in the guest
+//    from the placeholders — never copied from the host.
+//
+// See config.ts (GitHubOrgConfig / GhCliHost / ghCliSecretName) and
+// config-loader.ts (resolveMagicDirHosts / resolveGhCliHosts) for how the
+// configured hosts are resolved.
 
+import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { getSystemErrorName } from "node:util";
 
 import {
@@ -24,11 +39,9 @@ import type {
   VirtualFileHandle,
   VirtualProvider,
 } from "@earendil-works/gondolin";
-import {
-  GUEST_MAGIC_CLONES,
-  GUEST_MAGIC_DIR,
-  type ResolvedGitHubOrg,
-} from "./config";
+import { GUEST_MAGIC_DIR } from "./config";
+
+const pExecFile = promisify(execFile);
 
 // The base VirtualProvider value is loaded from the SDK as a constructor
 // signature that is not directly extendable; cast it once to keep the
@@ -36,11 +49,6 @@ import {
 const VirtualProviderClass = VirtualProviderBase as unknown as {
   new (...args: any[]): any;
 };
-
-/** Runs a command inside the guest and returns its captured output. */
-export type GuestExec = (
-  argv: string[],
-) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
 // A small local copy of the SDK's (non-exported) errno-error helper, so the
 // magic-dir provider can raise proper `ENOENT`/`EROFS`/... errors for the
@@ -67,11 +75,6 @@ function createErrnoError(
   return error;
 }
 
-// Quote a single argument for safe interpolation into a `bash -lc` string.
-function quoteArg(arg: string): string {
-  return `'${arg.replace(/'/g, "'\\''")}'`;
-}
-
 type ResolvedPath =
   | { kind: "root" }
   | { kind: "host"; host: string }
@@ -88,12 +91,10 @@ export interface MagicGitProviderOptions {
   /** Hosts to expose (the `magicDir: true` configured hosts). */
   hosts: string[];
   /**
-   * Host path backing GUEST_MAGIC_CLONES: `gh repo clone` (running in the
-   * guest) writes into this dir, and the provider serves it read-only.
+   * Host path where repos are cloned (a host temp dir, NOT mounted into the
+   * guest). The provider serves it read-only under /git.
    */
   cloneRoot: string;
-  /** Runs `gh` inside the guest. */
-  execInGuest: GuestExec;
 }
 
 /**
@@ -106,9 +107,10 @@ export interface MagicGitProviderOptions {
  *
  * The host level is a namespace (not independently listable — there is no
  * "list all owners" API); the agent addresses an owner by name. Listing an
- * owner and cloning a repo both shell out to `gh` inside the guest, where it
- * is installed and authenticated. Files are served from a host-backed clone
- * dir (GUEST_MAGIC_CLONES) via a RealFSProvider.
+ * owner and cloning a repo both shell out to `gh` on the host, where it is
+ * installed and authenticated via `gh auth login`. Clones are written to a
+ * temp dir and renamed into place on success, so an interrupted clone is
+ * never served as a complete repo.
  */
 export class MagicGitProvider
   extends VirtualProviderClass
@@ -116,7 +118,6 @@ export class MagicGitProvider
 {
   private readonly hosts: string[];
   private readonly cloneRoot: string;
-  private readonly execInGuest: GuestExec;
   private readonly owners = new Map<string, string[]>();
   private readonly repos = new Map<string, VirtualProvider>();
 
@@ -124,7 +125,6 @@ export class MagicGitProvider
     super();
     this.hosts = [...options.hosts].sort();
     this.cloneRoot = options.cloneRoot;
-    this.execInGuest = options.execInGuest;
   }
 
   get readonly(): boolean {
@@ -235,8 +235,8 @@ export class MagicGitProvider
 
   // ── Sync stubs ──────────────────────────────────────────────────────────
   // The guest reaches this mount through the FUSE→host RPC, which uses the
-  // async methods above. The sync forms are not supported (they would have to
-  // perform asynchronous `gh` work), so they fail loudly rather than hang.
+  // async methods above. The sync forms are not supported (they would have
+  // to perform asynchronous `gh` work), so they fail loudly rather than hang.
 
   openSync(): VirtualFileHandle {
     throw createErrnoError(ERRNO.ENOSYS, "openSync");
@@ -323,8 +323,8 @@ export class MagicGitProvider
     }
   }
 
-  // List an owner's repo names for a host, cached. Shells out to `gh` in the
-  // guest. A non-existent owner (gh failure) raises ENOENT and is not
+  // List an owner's repo names for a host, cached. Shells out to `gh` on the
+  // host. A non-existent owner (gh failure) raises ENOENT and is not
   // cached, so a transient failure is not pinned as an empty list.
   private async listRepos(host: string, owner: string): Promise<string[]> {
     const key = `${host}/${owner}`;
@@ -357,7 +357,9 @@ export class MagicGitProvider
   }
 
   // Get (and lazily clone) the read-only provider for a repo. The clone is
-  // awaited so the caller never serves a partially-populated repo.
+  // awaited so the caller never serves a partially-populated repo: it is
+  // written to a temp dir and renamed into place only on success, so a
+  // failed/interrupted clone leaves no dir behind to be served as complete.
   private async getRepoProvider(
     resolved: Extract<ResolvedPath, { kind: "repo" }>,
   ): Promise<VirtualProvider> {
@@ -371,15 +373,21 @@ export class MagicGitProvider
       resolved.owner,
       resolved.repo,
     );
-    const guestClonePath = `${GUEST_MAGIC_CLONES}/${resolved.host}/${
-      resolved.owner
-    }/${resolved.repo}`;
 
     if (!fs.existsSync(hostClonePath)) {
-      // Ensure the parent exists (host side) so `gh repo clone` can create the
-      // final dir in the guest.
+      // Ensure the parent exists (host side) so `gh repo clone` can create
+      // the final dir.
       fs.mkdirSync(path.dirname(hostClonePath), { recursive: true });
-      await this.cloneRepo(resolved, hostClonePath, guestClonePath);
+      const tmpClonePath = `${hostClonePath}.cloning-${
+        crypto.randomBytes(6).toString("hex")
+      }`;
+      try {
+        await this.cloneRepo(resolved, tmpClonePath);
+        fs.renameSync(tmpClonePath, hostClonePath);
+      } catch (err) {
+        fs.rmSync(tmpClonePath, { recursive: true, force: true });
+        throw err;
+      }
     }
 
     const provider = new ReadonlyProvider(new RealFSProvider(hostClonePath));
@@ -389,14 +397,13 @@ export class MagicGitProvider
 
   private async cloneRepo(
     resolved: Extract<ResolvedPath, { kind: "repo" }>,
-    hostClonePath: string,
-    guestClonePath: string,
+    clonePath: string,
   ): Promise<void> {
     const out = await this.gh(resolved.host, [
       "repo",
       "clone",
       `${resolved.owner}/${resolved.repo}`,
-      guestClonePath,
+      clonePath,
     ]);
     if (out.exitCode !== 0) {
       const detail = [out.stdout.trim(), out.stderr.trim()]
@@ -410,12 +417,27 @@ export class MagicGitProvider
     }
   }
 
+  // Run `gh` on the host for a specific host. The host's `gh` is
+  // authenticated by the user (`gh auth login`); GH_HOST selects the
+  // configured host (required for GHE hosts, harmless for github.com).
   private async gh(
     host: string,
     args: string[],
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    const command = `GH_HOST=${quoteArg(host)} gh ${args.map(quoteArg).join(" ")}`;
-    return this.execInGuest(["/bin/bash", "-lc", command]);
+    try {
+      const { stdout, stderr } = await pExecFile("gh", args, {
+        env: { ...process.env, GH_HOST: host },
+        encoding: "utf8",
+      });
+      return { stdout, stderr, exitCode: 0 };
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string; code?: number };
+      return {
+        stdout: e.stdout ?? "",
+        stderr: e.stderr ?? String(err),
+        exitCode: e.code ?? 1,
+      };
+    }
   }
 }
 
@@ -431,18 +453,55 @@ function withFileTypes(options?: object): boolean {
   );
 }
 
-// ─── gh installation & authentication ──────────────────────────────────────
+// ─── Magic dir host-side prerequisites ────────────────────────────────────
+
+/**
+ * Verify the host machine can serve the magic dir for the given hosts: the
+ * `gh` CLI is installed and authenticated (via `gh auth login`) for each.
+ * A failure fails the VM launch with an actionable message — the magic dir
+ * is host-side by design, so the fix is on the host, not in the guest.
+ */
+export async function checkHostGhAuth(hosts: string[]): Promise<void> {
+  for (const host of hosts) {
+    let stderr = "";
+    let exitCode = 0;
+    try {
+      await pExecFile("gh", ["auth", "status"], {
+        env: { ...process.env, GH_HOST: host },
+        encoding: "utf8",
+      });
+    } catch (err) {
+      const e = err as { stderr?: string; code?: number };
+      stderr = e.stderr ?? String(err);
+      exitCode = e.code ?? 1;
+    }
+    if (exitCode !== 0) {
+      throw new Error(
+        `gondolin: the magic dir for ${host} needs the host's \`gh\` CLI ` +
+          `installed and authenticated for that host.\n` +
+          `Run on the host:\n    GH_HOST=${host} gh auth login\n` +
+          `${stderr.trim()}`,
+      );
+    }
+  }
+}
+
+// ─── gh CLI in the guest ──────────────────────────────────────────────────
 
 /**
  * Install the `gh` CLI (if not already present) and write a `hosts.yml`
- * authenticating each configured host with its token. Runs inside the guest.
+ * authenticating each host with the *placeholder* of its Gondolin secret.
+ * The placeholder is what the guest ever sees; the http hooks substitute the
+ * real token at egress, restricted to the host. The hosts file is generated
+ * here from the config — it is never copied from the host — so the guest
+ * config is ephemeral and never exposes the real token.
  * A failure here fails the VM launch with the command output surfaced.
  */
-export async function setupGithubOrgs(
+export async function setupGhCli(
   vm: VM,
-  orgs: ResolvedGitHubOrg[],
+  hosts: Array<{ host: string; placeholder: string }>,
 ): Promise<void> {
-  if (orgs.length === 0) return;
+  if (hosts.length === 0) return;
 
   const install = await vm.exec(["/bin/sh", "-lc", GH_INSTALL_SCRIPT]);
   if (install.exitCode !== 0) {
@@ -454,23 +513,30 @@ export async function setupGithubOrgs(
     );
   }
 
-  const yaml = renderGhHostsYaml(orgs);
+  const yaml = renderGhHostsYaml(
+    hosts.map((h) => ({ host: h.host, token: h.placeholder })),
+  );
   await vm.fs.mkdir("/root/.config/gh", { recursive: true });
   await vm.fs.writeFile("/root/.config/gh/hosts.yml", yaml);
 }
 
-// Renders the `gh` hosts file: each host mapped to its https git protocol and
-// oauth token. `gh` reads this in headless/container environments (the same
-// store `gh auth login --with-token` writes).
-export function renderGhHostsYaml(orgs: ResolvedGitHubOrg[]): string {
-  return orgs
-    .map(
-      (org) =>
-        `${org.host}:\n` +
-        `    git_protocol: https\n` +
-        `    oauth_token: ${org.token}`,
-    )
-    .join("\n") + "\n";
+// Renders the `gh` hosts file: each host mapped to its https git protocol
+// and oauth token (in practice the secret's placeholder). `gh` reads this in
+// headless/container environments (the same store `gh auth login
+// --with-token` writes).
+export function renderGhHostsYaml(
+  hosts: Array<{ host: string; token: string }>,
+): string {
+  return (
+    hosts
+      .map(
+        (h) =>
+          `${h.host}:\n` +
+          `    git_protocol: https\n` +
+          `    oauth_token: ${h.token}`,
+      )
+      .join("\n") + "\n"
+  );
 }
 
 // Installs `gh`: prefer the Alpine package; fall back to the official release
@@ -492,23 +558,35 @@ install -m 0755 "$tmp"/gh_*/bin/gh /usr/local/bin/gh
 rm -rf "$tmp"
 `;
 
-// ─── System prompt ──────────────────────────────────────────────────────────
+// ─── System prompt ─────────────────────────────────────────────────────────
 
 /**
- * A short, human-readable line describing the configured GitHub hosts, for
- * inclusion in the system prompt. Empty when the feature is not configured.
- * The detailed how-to lives in the `github` skill (loaded on demand).
+ * A short, human-readable line describing the enabled GitHub features, for
+ * inclusion in the system prompt. Empty when neither feature is configured.
+ * The gh CLI instructions are included inline (per the feature design); the
+ * detailed how-to lives in the `github` skill (loaded on demand).
  */
-export function githubPromptLine(orgs: ResolvedGitHubOrg[]): string {
-  if (orgs.length === 0) return "";
-  const hosts = orgs.map((o) => o.host).join(", ");
-  let line = `GitHub: the \`gh\` CLI is installed and authenticated for: ${hosts}.`;
-  const magicHosts = orgs.filter((o) => o.magicDir).map((o) => o.host);
+export function githubPromptLine(
+  magicHosts: string[],
+  ghCliHosts: string[],
+): string {
+  const parts: string[] = [];
   if (magicHosts.length > 0) {
-    line +=
-      ` Repos are browsable as a read-only magic dir at ${GUEST_MAGIC_DIR} (` +
-      `${magicHosts.map((h) => `${GUEST_MAGIC_DIR}/${h}`).join(", ")}).`;
+    parts.push(
+      `Repos are browsable as a read-only magic dir at ${GUEST_MAGIC_DIR} ` +
+        `(${magicHosts.map((h) => `${GUEST_MAGIC_DIR}/${h}`).join(", ")}).`,
+    );
   }
-  line += ` See the \`github\` skill for how to use gh and the magic dir.`;
-  return line;
+  if (ghCliHosts.length > 0) {
+    parts.push(
+      `The \`gh\` CLI is installed and authenticated for: ${
+        ghCliHosts.join(", ")
+      }. Always set \`GH_HOST=<host>\` when running gh (required for GHE ` +
+        `hosts), e.g. \`GH_HOST=github.com gh repo list <owner>\`, ` +
+        `\`GH_HOST=github.com gh repo clone <owner>/<repo> <dir>\`, ` +
+        `\`GH_HOST=github.com gh pr create ...\`.`,
+    );
+  }
+  if (parts.length === 0) return "";
+  return parts.join(" ") + ` See the \`github\` skill for details.`;
 }

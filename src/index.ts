@@ -22,7 +22,7 @@ import {
   SUBAGENT_STATUS_TYPE,
   type SandboxEntryData,
 } from "./config";
-import { loadGondolinConfig, resolveGitHubOrgs } from "./config-loader";
+import { loadGondolinConfig, resolveMagicDirHosts, resolveGhCliHosts } from "./config-loader";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
@@ -404,7 +404,10 @@ export default function (pi: ExtensionAPI) {
     const scratchEnabled = config.scratch !== false;
     const developMode = config.developMode === true;
     const branch = sandbox.branch ?? DEFAULT_WORK_BRANCH;
-    const githubLine = githubPromptLine(resolveGitHubOrgs(config));
+    const githubLine = githubPromptLine(
+      resolveMagicDirHosts(config),
+      resolveGhCliHosts(config).map((h) => h.host),
+    );
 
     const lines: string[] = [
       `You are working in a gondolin sandbox.`,
