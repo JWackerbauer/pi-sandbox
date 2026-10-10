@@ -100,6 +100,26 @@ subagent usage guide (spawning, monitoring, aborting, merging) as on-demand skil
 content instead of permanent system prompt, so it only costs tokens when the agent
 loads it.
 
+### Skills as templates
+
+The package's `skills/` directory holds skill **templates**, not finished skills. At
+load time the extension serves them via `resources_discover`: each `.md` file is
+rendered with a context derived from the effective config, and the rendered output is
+returned as the skill path. This keeps environment-specific info (which hosts are
+reachable, which secrets are wired in, which features are on) out of the system prompt
+and into on-demand skill content instead.
+
+The available template variables are:
+
+- `{{github_hosts}}` — the union of every `secrets[*].hosts` entry (e.g. `"github.com"`).
+- `{{secrets}}` — the names of the configured secrets.
+- `{{scratch}}` — boolean; whether the scratch mounts are enabled.
+- `{{developMode}}` — boolean; whether the sandbox is in development mode.
+
+Sections (`{{#name}} … {{/name}}` when truthy, `{{^name}} … {{/name}}` when falsy) let a
+template show or hide whole blocks based on the config, e.g. the `sandbox` skill lists
+reachable hosts only when any are configured.
+
 ### Configuration — `gondolin.json`
 
 The extension reads a `gondolin.json` from two places: `~/.pi/agent/gondolin.json`
@@ -146,6 +166,11 @@ optional:
   plain values that live in the guest environment unencrypted — don't put secrets here
   (use `secrets` for those); a key that collides with a `secrets` entry keeps the
   secret's placeholder value.
+- **`.env` — host environment file.** At startup the extension loads a host
+  `<repo>/.env` into the host's `process.env`, so its values are available for secret
+  resolution (a `secrets` entry with no `value` field falls back to the env var named by
+  the key). Existing environment variables are **not** overridden — the real environment
+  always wins over the file. Missing or unreadable files are ignored.
 - **`scratch` — scratch mounts.** Two host directories are mounted into every guest so
   files survive VM/session restarts (they live under the host's tempdir, not in the
   VM's ephemeral disk):
@@ -195,5 +220,7 @@ lifecycle, sessions, subagent internals — see [docs/architecture.md](docs/arch
 - [docs/architecture.md](docs/architecture.md) — how it works: guest setup, tool
   redirection, VM lifecycle, sessions, subagents, images
 - [skills/subagents.md](skills/subagents.md) — the bundled subagent usage skill
+- [skills/sandbox.md](skills/sandbox.md) — the sandbox skill template (rendered with
+  the config at load time)
 - [docs/RFC-devcontainer-images-and-makefile.md](docs/RFC-devcontainer-images-and-makefile.md) —
   deferred feature proposals
