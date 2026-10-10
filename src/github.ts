@@ -539,23 +539,10 @@ export function renderGhHostsYaml(
   );
 }
 
-// Installs `gh`: prefer the Alpine package; fall back to the official release
-// binary (the stock image ships curl, jq and git, and can reach github.com).
-const GH_INSTALL_SCRIPT = `
-set -e
-if command -v gh >/dev/null 2>&1; then exit 0; fi
-if apk add --no-cache gh >/dev/null 2>&1; then exit 0; fi
-case "$(uname -m)" in
-  aarch64) gharch=aarch64 ;;
-  x86_64)  gharch=x86_64 ;;
-  *) echo "gondolin: unsupported guest arch for gh install: $(uname -m)" >&2; exit 1 ;;
-esac
-ver="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name)"
-tmp="$(mktemp -d)"
-curl -fsSL "https://github.com/cli/cli/releases/download/\${ver}/gh_\${ver#v}_linux_\${gharch}.tar.gz" -o "$tmp/gh.tar.gz"
-tar -xzf "$tmp/gh.tar.gz" -C "$tmp"
-install -m 0755 "$tmp"/gh_*/bin/gh /usr/local/bin/gh
-rm -rf "$tmp"
+// Installs `gh` from the Alpine package (the stock image's repository has
+// `github-cli`).
+const GH_INSTALL_SCRIPT = `set -e
+command -v gh >/dev/null 2>&1 || apk add --no-cache github-cli
 `;
 
 // ─── System prompt ─────────────────────────────────────────────────────────
