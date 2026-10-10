@@ -65,7 +65,7 @@ test("a comment tag is removed", () => {
 });
 
 test("a stray {{ without a closing }} is preserved as literal text", () => {
-  assert.equal(renderTemplate("price is {{name}}", { name: "x" }), "price is {{name}}");
+  assert.equal(renderTemplate("price is {{name", { name: "x" }), "price is {{name");
   // Only the stray part is literal; a real tag before it still renders.
   assert.equal(renderTemplate("{{name}} and {{stray", { name: "x" }), "x and {{stray");
 });

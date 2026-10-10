@@ -66,7 +66,10 @@ export function renderedSkillPaths(
       continue;
     }
     if (!isFile) continue;
-    const rendered = renderTemplate(fs.readFileSync(srcPath, "utf8"), context);
+    let rendered = renderTemplate(fs.readFileSync(srcPath, "utf8"), context);
+    // Section tags leave blank lines where a block was omitted; collapse runs
+    // of three or more newlines to a single blank line.
+    rendered = rendered.replace(/\n{3,}/g, "\n\n");
     fs.writeFileSync(path.join(outDir, name), rendered);
   }
   return outDir;
