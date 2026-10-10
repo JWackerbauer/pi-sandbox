@@ -7,6 +7,12 @@ git config --global user.name "$GIT_NAME"
 cd "$GUEST_GIT_DIR" || exit
 git config --global --add safe.directory "$GUEST_GIT_DIR"
 git config --global --add safe.directory "$GUEST_WORKSPACE"
+# The magic git dir (when mounted) is served with the host user's uid, so
+# git's dubious-ownership check would reject `git clone /git/...` from the
+# guest. Entries match exact paths (not prefixes), so trust all repos:
+# safe here because every repo in the guest is root-initiated and the
+# guest itself is an ephemeral sandbox.
+git config --global --add safe.directory '*'
 git config --global core.hooksPath "$GIT_HOOKS_DIR"
 
 # A stale worktree registration for this exact path (left by a session that
