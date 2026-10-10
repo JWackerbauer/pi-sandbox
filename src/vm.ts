@@ -30,6 +30,11 @@ import {
   PREPARE_SCRIPT,
 } from "./config";
 
+// No-op prepare-commit-msg hook written when the pi-agent co-author
+// attribution is disabled (config `coAuthor: false`): commits are left
+// exactly as authored, with no trailer appended.
+const NOOP_PREPARE_COMMIT_MSG_HOOK = `#!/bin/sh\n# pi-agent co-author attribution disabled (config coAuthor: false)\nexit 0\n`;
+
 export interface DetachedVmOptions {
   localCwd: string;
   localGitDir: string;
@@ -127,9 +132,14 @@ export async function launchDetachedVm(
       fs.readFileSync(path.join(moduleRoot, "scripts", "prepare.sh")),
     );
     await created.fs.mkdir(GIT_HOOKS_DIR, { recursive: true });
+    // The pi-agent co-author trailer is on by default; only an explicit
+    // `coAuthor: false` in the config swaps in a no-op hook.
+    const coAuthorEnabled = config.coAuthor !== false;
     await created.fs.writeFile(
       path.join(GIT_HOOKS_DIR, "prepare-commit-msg"),
-      fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg")),
+      coAuthorEnabled
+        ? fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg"))
+        : NOOP_PREPARE_COMMIT_MSG_HOOK,
     );
     // `branch` and `branchStart` are sanitized branch names ([a-z0-9-] only)
     // or commit hashes, so they are safe to interpolate into the shell

@@ -92,6 +92,24 @@ test("developMode defaults to off and project overrides global", () => {
   );
 });
 
+test("coAuthor defaults to on and project overrides global", () => {
+  // Absent in both → undefined (on by default; see vm.ts).
+  const off = makeEnv(null, null);
+  assert.equal(loadGondolinConfig(off.localCwd, off.agentDir).coAuthor, undefined);
+  // Global true, project unset → true (inherited).
+  const fromGlobal = makeEnv({ coAuthor: true }, null);
+  assert.equal(
+    loadGondolinConfig(fromGlobal.localCwd, fromGlobal.agentDir).coAuthor,
+    true,
+  );
+  // Global true, project false → false (project wins).
+  const fromProject = makeEnv({ coAuthor: true }, { coAuthor: false });
+  assert.equal(
+    loadGondolinConfig(fromProject.localCwd, fromProject.agentDir).coAuthor,
+    false,
+  );
+});
+
 test("postStartup is normalized to a string array", () => {
   // A bare string is accepted as a one-command list.
   let env = makeEnv({ postStartup: "npm install" }, null);

@@ -96,6 +96,9 @@ function mergeConfigs(
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;
   }
+  if (global.coAuthor !== undefined || project.coAuthor !== undefined) {
+    merged.coAuthor = project.coAuthor ?? global.coAuthor;
+  }
   if (global.developMode !== undefined || project.developMode !== undefined) {
     merged.developMode = project.developMode ?? global.developMode;
   }

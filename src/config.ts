@@ -138,6 +138,12 @@ export interface GondolinConfig {
    */
   scratch?: boolean;
   /**
+   * Add a `Co-Authored-By: pi-agent` trailer to commits made inside the
+   * guest (via the prepare-commit-msg git hook). Default true. Set false
+   * to disable the pi-agent co-author attribution.
+   */
+  coAuthor?: boolean;
+  /**
    * Tell the agent that the sandbox is under development and that it should
    * report any issues it had with the sandbox once it is done working.
    * Default false.
