@@ -117,7 +117,13 @@ export async function launchDetachedVm(
   }
   const ghCliSecrets: Record<string, SecretDefinition> = {};
   for (const h of ghCliHosts) {
-    ghCliSecrets[ghCliSecretName(h.host)] = { hosts: [h.host], value: h.token };
+    // gh's git traffic goes to the host itself, but its API calls go to
+    // api.<host> (for GHE the API lives on the host, so the extra entry is
+    // harmless there).
+    ghCliSecrets[ghCliSecretName(h.host)] = {
+      hosts: [h.host, `api.${h.host}`],
+      value: h.token,
+    };
   }
   const { httpHooks, env: secretsEnv } = createHttpHooks({
     secrets: { ...resolveSecrets(config), ...ghCliSecrets },
