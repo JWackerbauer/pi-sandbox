@@ -44,11 +44,46 @@ export default function (pi: ExtensionAPI) {
   const sandbox = createSandbox(localCwd, localGitDir);
 
   // Latest ExtensionContext seen by a hook or tool, used to refresh the
-  // status bar from background subagent state changes.
+  // status bar and the subagent spinner from background state changes.
   let lastCtx: ExtensionContext | undefined;
   let shuttingDown = false;
+  // Braille spinner frames, animated while at least one subagent runs.
+  const spinnerFrames = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2866", "\u2827", "\u2807", "\u280f"];
+  let spinnerTimer: NodeJS.Timeout | undefined;
+  let spinnerFrame = 0;
   function touch(ctx: ExtensionContext): void {
     lastCtx = ctx;
+  }
+  function stopSpinner(): void {
+    if (spinnerTimer) clearInterval(spinnerTimer);
+    spinnerTimer = undefined;
+    spinnerFrame = 0;
+  }
+  function renderSpinner(ctx: ExtensionContext): void {
+    const running = subagents.runningCount();
+    if (running === 0) {
+      stopSpinner();
+      ctx.ui.setWidget("gondolin-subagents", undefined);
+      return;
+    }
+    const frame = spinnerFrames[spinnerFrame % spinnerFrames.length]!;
+    spinnerFrame += 1;
+    ctx.ui.setWidget(
+      "gondolin-subagents",
+      [
+        ctx.ui.theme.fg(
+          "accent",
+          `${frame} ${running} subagent${running > 1 ? "s" : ""} running`,
+        ),
+      ],
+    );
+  }
+  function startSpinner(ctx: ExtensionContext): void {
+    if (spinnerTimer) return;
+    renderSpinner(ctx);
+    spinnerTimer = setInterval(() => {
+      if (lastCtx) renderSpinner(lastCtx);
+    }, 80);
   }
   function updateStatus(ctx: ExtensionContext | undefined): void {
     if (!ctx || shuttingDown) return;
@@ -61,6 +96,14 @@ export default function (pi: ExtensionAPI) {
       "gondolin",
       ctx.ui.theme.fg("accent", parts.join(" \u00b7 ")),
     );
+    // Animate a spinner widget above the editor while subagents run; clear
+    // it once the last one settles.
+    if (running > 0) {
+      startSpinner(ctx);
+    } else {
+      stopSpinner();
+      ctx.ui.setWidget("gondolin-subagents", undefined);
+    }
   }
 
   // Detached subagent sessions: each gets its own VM and work branch, runs
@@ -108,7 +151,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
-  // and starts the first turn with the user's prompt.
+  // and starts the first turn with the user's prompt (concurrently with
+  // the VM launch).
   registerBuildCommand(pi, sandbox);
 
   // Bring the sandbox back up when a session that ran in the sandbox is
@@ -126,6 +170,8 @@ export default function (pi: ExtensionAPI) {
   // branch) or by the first tool call that needs it (default branch).
   pi.on("session_shutdown", async (_event, ctx) => {
     shuttingDown = true;
+    stopSpinner();
+    ctx.ui.setWidget("gondolin-subagents", undefined);
     ctx.ui.setStatus(
       "gondolin",
       ctx.ui.theme.fg("muted", "gondolin: stopping"),
@@ -394,9 +440,12 @@ export default function (pi: ExtensionAPI) {
   // always-present prompt stays lean.
   pi.on("before_agent_start", async (event, ctx) => {
     touch(ctx);
-    await sandbox.ensureVm(ctx);
-    // Check the config so the prompt only advertises features that are
-    // actually enabled (see vm.ts).
+    // Do NOT await the VM here: the first turn must be able to start (and
+    // stream its response) while the VM is still booting. The CWD section
+    // only needs the branch, which is known as soon as the launch starts
+    // (see vm.ts). Tool calls gate on the VM via ensureVm() instead.
+    // Scratch mounts are enabled by default; check the config so the prompt
+    // only advertises them when they are actually mounted (see vm.ts).
     const config = loadGondolinConfig(
       localCwd,
       path.join(os.homedir(), ".pi", "agent"),
