@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/JWackerbauer/pi-sandbox/main/gondolin.schema.json",
+  "title": "Gondolin sandbox configuration",
+  "description": "Configuration for the gondolin-sandbox pi extension. Loaded from ~/.pi/agent/gondolin.json (global) merged with <repo>/.pi/gondolin.json (project; project values override global). Unknown keys are ignored by the loader, but are rejected here to catch typos.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "vm": {
+      "$ref": "#/$defs/vmSizing",
+      "description": "Sizing for the main session VM. Defaults: memory 1G, cpus 2."
+    },
+    "subagent": {
+      "$ref": "#/$defs/vmSizing",
+      "description": "Sizing for subagent VMs (smaller by default: memory 512M, cpus 1)."
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Plain (non-secret) environment variables set inside the guest VM, visible to every process the agent runs. Merged per key with the global config. Do not put secrets here — use `secrets`."
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/secretConfig" },
+      "description": "Map of secret name → secret config. For each entry the value is taken from the entry's `value` field, falling back to the host environment variable named by the map key at VM launch, and the secret is shared with the guest only for the listed hosts. Entries with no value in either source are skipped."
+    },
+    "github": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/githubHost" },
+      "description": "GitHub hosts the agent can access. Merged by host: a project entry overrides or adds a host."
+    },
+    "scratch": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable the per-repo (`/scratch`) and per-branch (`/scratch-local`) scratch mounts (host tempdir → guest). Set false to disable both."
+    },
+    "coAuthor": {
+      "type": "boolean",
+      "default": false,
+      "description": "Add a `Co-Authored-By: pi-agent` trailer to commits made inside the guest (via the prepare-commit-msg git hook)."
+    },
+    "developMode": {
+      "type": "boolean",
+      "default": false,
+      "description": "Tell the agent that the sandbox is under development and that it should report any issues it had with the sandbox once it is done working."
+    },
+    "postStartup": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Shell commands run in the agent's workspace (`/<branch>`) after the VM has started up and the worktree is ready, in list order. Each entry is a shell line run via /bin/sh -lc in the guest. Project values override the global list wholesale."
+    },
+    "postBuild": {
+      "$ref": "#/$defs/postBuild",
+      "description": "Post-build section baked into a custom image at startup. When set, the stock image is rebuilt with these commands and the assets are cached under the repo's `.pi` folder (or the global agent dir for a global-only postBuild). Project values override the global section wholesale."
+    }
+  },
+  "$defs": {
+    "vmSizing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory": {
+          "type": "string",
+          "description": "Memory in qemu syntax (e.g. \"512M\", \"1G\")."
+        },
+        "cpus": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "CPU count."
+        }
+      }
+    },
+    "secretConfig": {
+      "type": "object",
+      "required": ["hosts"],
+      "additionalProperties": false,
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "description": "Host patterns this secret may be sent to (e.g. [\"github.com\"])."
+        },
+        "value": {
+          "type": "string",
+          "description": "Literal secret value. When absent the value is read from the host environment variable named by the map key. Prefer the env var — the config file is a less secret place to live."
+        },
+        "placeholder": {
+          "type": "string",
+          "description": "Guest-visible placeholder. When absent the Gondolin SDK generates a random placeholder."
+        }
+      }
+    },
+    "githubHost": {
+      "type": "object",
+      "required": ["host"],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": { "magicDir": { "type": "boolean" } },
+          "required": ["magicDir"]
+        },
+        {
+          "properties": { "ghCliToken": { "type": "string" } },
+          "required": ["ghCliToken"]
+        }
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The GitHub host: `github.com` or a GitHub Enterprise host such as `myorg.ghe.com`."
+        },
+        "magicDir": {
+          "type": "boolean",
+          "description": "When true, expose this host's repos as a read-only magic dir under `/git/<host>/`. Uses the host machine's `gh` authentication (`gh auth login`), no token in the config."
+        },
+        "ghCliToken": {
+          "type": "string",
+          "description": "When set, install & authenticate the `gh` CLI for this host in the guest. Either a literal token value, or the name of a host environment variable that holds the token (a set env var takes precedence over a literal; an unset env-var-name entry is skipped). The token is passed to the guest as a secret with egress restricted to this host."
+        }
+      },
+      "description": "A GitHub host entry. Two independent opt-in features: `magicDir` (host-side read-only repo browser) and `ghCliToken` (installs & authenticates the `gh` CLI in the guest). An entry enabling neither is ignored by the loader."
+    },
+    "postBuild": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "copy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["src", "dest"],
+            "additionalProperties": false,
+            "properties": {
+              "src": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Host source path (resolved relative to the config file)."
+              },
+              "dest": {
+                "type": "string",
+                "pattern": "^/",
+                "description": "Absolute destination path inside the guest rootfs."
+              }
+            }
+          },
+          "description": "Host files/directories copied into the rootfs before the commands run."
+        },
+        "commands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Shell commands executed in the rootfs after package installation."
+        }
+      }
+    }
+  }
+}

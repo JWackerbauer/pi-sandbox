@@ -169,7 +169,10 @@ The extension reads a `gondolin.json` from two places: `~/.pi/agent/gondolin.jso
 global one — sizing, `secrets`/`env` (per key) and `github` (by host) merge field by
 field, so a project can override just `vm.memory` while inheriting `vm.cpus`, or add a
 host; `postStartup` and `postBuild` replace the global value wholesale. Missing or
-invalid files are treated as empty. All fields are optional:
+invalid files are treated as empty. All fields are optional. A JSON Schema for the
+file is provided in [`gondolin.schema.json`](gondolin.schema.json) — reference it via
+`"$schema": "https://raw.githubusercontent.com/JWackerbauer/pi-sandbox/main/gondolin.schema.json"`
+for editor autocompletion and validation.
 
 ```json
 {
