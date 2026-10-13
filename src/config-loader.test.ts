@@ -371,7 +371,7 @@ test("resolveGhCliHosts resolves tokens and skips unusable entries", () => {
         { host: "ghe.io", ghCliToken: "literal-token-1" }, // literal
         { host: "ghe2.io", ghCliToken: "GHE_UNSET" }, // unset env name → skipped
         { host: "dup.io", ghCliToken: "literal-a" },
-        { host: "dup.io", ghCliToken: "literal-b" }, // dup host → first wins
+        { host: "dup.io", ghCliToken: "literal-b" }, // dup host → merged by host at load, last wins
       ],
     },
     null,
@@ -384,7 +384,7 @@ test("resolveGhCliHosts resolves tokens and skips unusable entries", () => {
   assert.deepEqual(resolved, [
     { host: "github.com", token: "from-env" },
     { host: "ghe.io", token: "literal-token-1" },
-    { host: "dup.io", token: "literal-a" },
+    { host: "dup.io", token: "literal-b" },
   ]);
 });
 

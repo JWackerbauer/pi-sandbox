@@ -31,7 +31,7 @@ test("githubPromptLine lists the magic dir and gh CLI hosts separately", () => {
   // gh CLI: usage instructions are included inline.
   assert.match(line, /myorg\.ghe\.com/);
   assert.match(line, /GH_HOST=<host>/);
-  assert.match(line, /github skill/);
+  assert.match(line, /`github` skill/);
 });
 
 test("githubPromptLine omits each feature when its host list is empty", () => {
