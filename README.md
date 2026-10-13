@@ -112,10 +112,15 @@ prompt and into on-demand skill content instead.
 The rendered files live **on the host only**, on purpose: pi's skill loader reads
 the front matter on the host, and when the agent checks a skill it issues a plain
 `read` tool call on the listed path — which the wrapped `read` tool intercepts and
-serves from the host. The sandbox worktree is never touched, so there is no risk of
-colliding with repo-local files under `.pi/`. The skills are read-only from the
-agent's view: writes and edits to the skills dir are rejected by the workspace
-containment check.
+serves from the host. The same interception covers **global skills**
+(`~/.pi/agent/skills`, `~/.agents/skills`): they live outside the repo root, so they
+would fail the guest's workspace containment check; the agent reads them from the
+host instead. **Repo-local skills** (`<repo>/.pi/skills`, `<repo>/.agents/skills`)
+need no interception: their host paths map into the guest worktree, which contains
+the tracked repo files. The sandbox worktree is never touched by gondolin itself,
+so there is no risk of colliding with repo-local files under `.pi/`. Skills are
+read-only from the agent's view: writes and edits to the host-served dirs are
+rejected by the workspace containment check.
 
 The available template variables are:
 

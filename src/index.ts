@@ -25,7 +25,7 @@ import {
 import { loadGondolinConfig } from "./config-loader";
 import { loadDotEnv } from "./dotenv";
 import { renderPreamble, skillNames } from "./preamble";
-import { buildSkillContext, isRenderedSkillPath, renderedSkillPaths } from "./skills";
+import { buildSkillContext, isHostServedPath, renderedSkillPaths } from "./skills";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
@@ -64,6 +64,19 @@ export default function (pi: ExtensionAPI) {
   const localWrite = createWriteTool(localCwd);
   const localEdit = createEditTool(localCwd);
   const localBash = createBashTool(localCwd);
+
+  // Host dirs served to the agent by the read tool instead of the guest:
+  // the rendered gondolin skills (host temp dir) and the global skill roots
+  // (pi's system prompt lists every skill by its host path — repo-local
+  // skills are under the repo root and map into the worktree, but global
+  // skills live outside it and would fail the containment check). Writes
+  // and edits to these dirs are still rejected by the containment check,
+  // so they stay read-only from the agent's view.
+  const hostServedSkillRoots = [
+    skillsDir,
+    path.join(agentDir, "skills"),
+    path.join(os.homedir(), ".agents", "skills"),
+  ];
 
   const sandbox = createSandbox(localCwd, localGitDir);
 
@@ -273,15 +286,15 @@ export default function (pi: ExtensionAPI) {
     ...localRead,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      // The rendered gondolin skills live on the host (the paths listed in
-      // the prompt are host temp-dir paths the guest cannot see). Serve
-      // them from the host with the plain read tool so the agent can check
-      // its skills; everything else routes to the guest. Writes/edits to
-      // the skills dir are still rejected by the containment check — the
-      // skills are read-only from the agent's view.
+      // Skill files listed in the prompt (gondolin's rendered skills and
+      // global skills) live on the host only; serve them with the plain
+      // read tool so the agent can check them. Everything else routes to
+      // the guest (repo-local skills map into the worktree). Writes/
+      // edits to the skills dirs are still rejected by the containment
+      // check — the skills are read-only from the agent's view.
       if (
         typeof params.path === "string" &&
-        isRenderedSkillPath(localCwd, params.path, skillsDir)
+        isHostServedPath(localCwd, params.path, hostServedSkillRoots)
       ) {
         return localRead.execute(id, params, signal, onUpdate);
       }

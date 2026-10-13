@@ -91,13 +91,17 @@ they ship as skills (`skills/sandbox.md`, `skills/subagents.md`) that pi loads f
 this package, so they only cost tokens when the agent loads the skill.
 
 The skill templates are rendered at load time into a per-process host temp dir and
-served via `resources_discover`. The files live on the host only: pi's skill loader
-reads the front matter on the host, and when the agent checks a skill it issues a
-plain `read` tool call on the listed path — the wrapped `read` tool intercepts paths
-inside the rendered skills dir and serves them from the host with the plain read
-tool, so the sandbox worktree is never touched. Writes and edits to the skills dir
-are rejected by the workspace containment check, keeping the skills read-only from
-the agent's view.
+served via `resources_discover`. Pi's system prompt lists every skill by its **host
+file path**, and the agent loads a skill with a plain `read` call — so the wrapped
+`read` tool is the interception point for skills. It serves any read inside the
+host-served skill roots with the plain host read tool: the rendered gondolin skills
+(host temp dir) and the global skill roots (`<agentDir>/skills`,
+`~/.agents/skills`), which live outside the repo root and would fail the guest's
+workspace containment check. Repo-local skills need no interception: their host
+paths map into the guest worktree, which contains the tracked repo files (untracked
+local skill files are host-only and not visible in the guest). Writes and edits to
+the host-served dirs are rejected by the containment check, keeping the skills
+read-only from the agent's view.
 
 ## VM lifecycle
 

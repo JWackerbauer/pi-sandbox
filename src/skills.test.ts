@@ -5,16 +5,25 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isRenderedSkillPath, renderedSkillPaths } from "./skills";
+import { isHostServedPath, renderedSkillPaths } from "./skills";
 
-test("isRenderedSkillPath matches the skills dir and its files", () => {
-  const dir = "/tmp/gondolin-sandbox/skills-1234";
-  assert.equal(isRenderedSkillPath("/host/cwd", dir, dir), true);
-  assert.equal(isRenderedSkillPath("/host/cwd", `${dir}/sandbox.md`, dir), true);
-  // A relative path that resolves outside the skills dir does not match.
-  assert.equal(isRenderedSkillPath("/host/cwd", ".pi/skills/gondolin/sandbox.md", dir), false);
+test("isHostServedPath matches paths inside any of the given roots", () => {
+  const skillsDir = "/tmp/gondolin-sandbox/skills-1234";
+  const globalSkills = "/home/user/.pi/agent/skills";
+  const roots = [skillsDir, globalSkills];
+  assert.equal(isHostServedPath("/host/cwd", skillsDir, roots), true);
+  assert.equal(isHostServedPath("/host/cwd", `${skillsDir}/sandbox.md`, roots), true);
+  assert.equal(
+    isHostServedPath("/host/cwd", `${globalSkills}/pdf-tools/SKILL.md`, roots),
+    true,
+  );
+  // A relative path that resolves outside the roots does not match.
+  assert.equal(
+    isHostServedPath("/host/cwd", ".pi/skills/gondolin/sandbox.md", roots),
+    false,
+  );
   // A sibling dir sharing the prefix is not inside the skills dir.
-  assert.equal(isRenderedSkillPath("/host/cwd", `${dir}-2/sandbox.md`, dir), false);
+  assert.equal(isHostServedPath("/host/cwd", `${skillsDir}-2/sandbox.md`, roots), false);
 });
 
 test("renderedSkillPaths renders templates into a fresh per-process temp dir", () => {

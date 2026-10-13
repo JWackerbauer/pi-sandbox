@@ -78,16 +78,18 @@ export function renderedSkillPaths(
 }
 
 /**
- * Whether `p` (resolved against `localCwd`) is the rendered skills
- * directory itself or a file inside it. The wrapped read tool uses this to
- * serve gondolin skills from the host (see index.ts); the guest never sees
- * them, and the containment check keeps writes/edits out.
+ * Whether `p` (resolved against `localCwd`) is inside one of `hostRoots`.
+ * The wrapped read tool uses this to serve skill files from the host (see
+ * index.ts); the guest never sees them, and the containment check keeps
+ * writes/edits out.
  */
-export function isRenderedSkillPath(
+export function isHostServedPath(
   localCwd: string,
   p: string,
-  skillsDir: string,
+  hostRoots: string[],
 ): boolean {
   const resolved = path.resolve(localCwd, p);
-  return resolved === skillsDir || resolved.startsWith(skillsDir + path.sep);
+  return hostRoots.some(
+    (root) => resolved === root || resolved.startsWith(root + path.sep),
+  );
 }
