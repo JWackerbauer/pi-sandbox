@@ -61,7 +61,8 @@ export const SUMMARY_MAX_TOKENS = 32;
 export const BRANCH_NAME_MAX_LENGTH = 40;
 
 // Git identity for commits made inside the guest (attributed to the operator,
-// with the pi-agent co-author trailer added by the prepare-commit-msg hook).
+// with an optional pi-agent co-author trailer added by the
+// prepare-commit-msg hook, enabled by config `coAuthor: true`).
 export const GIT_EMAIL = "jan.wackerbauer@gmail.com";
 export const GIT_NAME = "Jan Wackerbauer";
 
@@ -202,8 +203,8 @@ export interface GondolinConfig {
   scratch?: boolean;
   /**
    * Add a `Co-Authored-By: pi-agent` trailer to commits made inside the
-   * guest (via the prepare-commit-msg git hook). Default true. Set false
-   * to disable the pi-agent co-author attribution.
+   * guest (via the prepare-commit-msg git hook). Default false. Set true
+   * to enable the pi-agent co-author attribution.
    */
   coAuthor?: boolean;
   /**

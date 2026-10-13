@@ -42,10 +42,9 @@ pi '/build-in-sandbox <what do you want to build?>'
 
 - The status bar shows `gondolin: <branch>` while the sandbox runs, plus the number of
   running subagents.
-- The agent commits to its own branch (commits carry a `Co-Authored-By: pi-agent`
-  trailer, enabled by default — set `"coAuthor": false` in your `gondolin.json`
-  to stop adding it). You review and merge on the host: `git log` / `git diff`,
-  then `git merge <branch>`.
+- The agent commits to its own branch (commits can carry a `Co-Authored-By: pi-agent`
+  trailer — opt-in, set `"coAuthor": true` in your `gondolin.json` to add it). You
+  review and merge on the host: `git log` / `git diff`, then `git merge <branch>`.
 - Your user `!` bash commands run inside the guest too, so what the agent sees is what
   you see.
 - The workspace is ephemeral, but two scratch directories persist across VM restarts:
@@ -249,8 +248,8 @@ invalid files are treated as empty. All fields are optional:
   is done working. Default `false`.
 - **`coAuthor` — pi-agent co-author attribution.** When `true`, commits made inside the
   guest carry a `Co-Authored-By: pi-agent <pi-agent@localhost>` trailer (added by a
-  prepare-commit-msg git hook installed at VM launch). Default `true`; set
-  `"coAuthor": false` to disable it.
+  prepare-commit-msg git hook installed at VM launch). Default `false`; set
+  `"coAuthor": true` to enable it.
 - **`postBuild` — custom image.** Baked into a custom image at startup: the stock
   `image/image.json` config is rebuilt with the section's `commands` run inside the
   rootfs after package installation (optionally after `copy` entries copy host files

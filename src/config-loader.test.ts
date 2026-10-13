@@ -94,8 +94,8 @@ test("developMode defaults to off and project overrides global", () => {
   );
 });
 
-test("coAuthor defaults to on and project overrides global", () => {
-  // Absent in both → undefined (on by default; see vm.ts).
+test("coAuthor project overrides global", () => {
+  // Absent in both → undefined (off by default; see vm.ts).
   const off = makeEnv(null, null);
   assert.equal(loadGondolinConfig(off.localCwd, off.agentDir).coAuthor, undefined);
   // Global true, project unset → true (inherited).

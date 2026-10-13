@@ -41,7 +41,8 @@ pi session (host)
     (the per-branch guest path `/<branch>`), optionally from a start ref
     (`WORK_BRANCH_START`, used by subagents to branch off the parent's branch).
 - The `prepare-commit-msg` hook appends a `Co-Authored-By: pi-agent` trailer to
-  commits, so agent commits are attributable.
+  commits so agent commits are attributable. This is opt-in (config
+  `coAuthor: true`); by default a no-op hook is installed.
 - If a stale worktree registration for the exact workspace path exists (left by a
   session that crashed before its shutdown cleanup ran), `prepare.sh` detects it and
   tells the user to `git worktree prune` (or remove just that worktree) on the host.
