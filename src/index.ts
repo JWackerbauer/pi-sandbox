@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -16,6 +17,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { VM } from "@earendil-works/gondolin";
 import {
   DEFAULT_WORK_BRANCH,
+  hostSkillsDir,
   SANDBOX_ENTRY_TYPE,
   SANDBOX_PREAMBLE_TYPE,
   SUBAGENT_RESULT_TYPE,
@@ -45,17 +47,51 @@ export default function (pi: ExtensionAPI) {
   // not already set in the environment are added.
   loadDotEnv(path.join(localCwd, ".env"));
 
+  // Package root and the skills template dir, shared by the preamble and
+  // the resources_discover hook below.
+  const packageDir = path.resolve(__dirname, "..");
+  const skillsTemplateDir = path.join(packageDir, "skills");
+
+  // Render the package's skill templates into the repo's
+  // `.pi/skills/gondolin` directory — a stable host path under the repo
+  // root. Pi's skill loader reads the front matter on the host, and the
+  // skill paths listed in the prompt are host repo paths that map into the
+  // guest workspace (see guest-path.ts); the files themselves are copied
+  // into each guest worktree at VM launch (see vm.ts), so the agent can
+  // read them from inside the sandbox. `.pi/` is excluded from git status
+  // below, so the rendered files never show up as untracked.
+  const config = loadGondolinConfig(localCwd, agentDir);
+  const skillsDir = renderedSkillPaths(
+    skillsTemplateDir,
+    buildSkillContext(config),
+    hostSkillsDir(localCwd),
+  );
+
+  // Keep the project `.pi` directory (config + rendered skills) out of git
+  // status: the guest worktree shares this .git, so the exclude applies to
+  // both the host's and the guest's views. Best effort.
+  try {
+    const excludePath = path.join(localGitDir, "info", "exclude");
+    fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+    const existing = fs.existsSync(excludePath)
+      ? fs.readFileSync(excludePath, "utf8")
+      : "";
+    if (!existing.split("\n").includes(".pi/")) {
+      fs.appendFileSync(
+        excludePath,
+        (existing === "" || existing.endsWith("\n") ? "" : "\n") + ".pi/\n",
+      );
+    }
+  } catch {
+    // Best effort: worst case the rendered files show up as untracked.
+  }
+
   const localRead = createReadTool(localCwd);
   const localWrite = createWriteTool(localCwd);
   const localEdit = createEditTool(localCwd);
   const localBash = createBashTool(localCwd);
 
-  const sandbox = createSandbox(localCwd, localGitDir);
-
-  // Package root and the skills template dir, shared by the preamble and
-  // the resources_discover hook below.
-  const packageDir = path.resolve(__dirname, "..");
-  const skillsTemplateDir = path.join(packageDir, "skills");
+  const sandbox = createSandbox(localCwd, localGitDir, { skillsDir });
 
   // Send the sandbox preamble: a non-display custom message telling the
   // agent that its session parameters have changed (new cwd, branch,
@@ -253,14 +289,10 @@ export default function (pi: ExtensionAPI) {
 
   // Serve gondolin's skills as rendered templates: the raw .md files in the
   // package's skills/ directory are templates, rendered with a context
-  // derived from the config (available github hosts, secrets, features) so
-  // that environment-specific info lives in on-demand skill content instead
-  // of the system prompt.
+  // derived from the config (available github hosts, secrets, features) at
+  // load time into the repo's .pi/skills/gondolin directory (see above).
   pi.on("resources_discover", () => {
-    const config = loadGondolinConfig(localCwd, agentDir);
-    const context = buildSkillContext(config);
-    const dir = renderedSkillPaths(skillsTemplateDir, context);
-    return { skillPaths: [dir] };
+    return { skillPaths: [skillsDir] };
   });
 
   pi.registerTool({

@@ -18,6 +18,7 @@ import {
   DEFAULT_SUBAGENT_SIZING,
   DEFAULT_VM_SIZING,
   DEFAULT_WORK_BRANCH,
+  guestSkillsDir,
   guestWorkspace,
   GUEST_GIT_DIR,
   GUEST_SCRATCH,
@@ -51,6 +52,13 @@ export interface DetachedVmOptions {
    * image build log, line by line (rendered in the TUI).
    */
   onNotice?: (message: string) => void;
+  /**
+   * Host directory of the rendered gondolin skills; its `.md` files are
+   * copied into the guest worktree at `.pi/skills/gondolin` so the agent can
+   * read them (the skill paths listed in the prompt are host repo paths
+   * that map into the guest workspace — see guest-path.ts).
+   */
+  skillsDir?: string;
 }
 
 // Create a standalone VM for the given work branch: mounts the shared .git,
@@ -63,7 +71,8 @@ export async function launchDetachedVm(
   branch: string,
   opts: DetachedVmOptions,
 ): Promise<VM> {
-  const { localCwd, localGitDir, branchStart, isSubagent = false } = opts;
+  const { localCwd, localGitDir, branchStart, isSubagent = false, skillsDir } =
+    opts;
 
   // The config is a tiny JSON read; loading it per launch keeps this simple
   // and always current.
@@ -168,6 +177,11 @@ export async function launchDetachedVm(
       );
     }
 
+    // The rendered skills, copied into the worktree so the agent can read
+    // them from inside the sandbox (the skill paths listed in the prompt
+    // are host repo paths that map into the guest workspace).
+    await copySkillsToGuest(created, skillsDir, branch);
+
     // User-defined post-startup commands (config `postStartup`), run in the
     // agent's workspace, which exists once prepare.sh created the worktree.
     await runPostStartupCommands(
@@ -185,6 +199,39 @@ export async function launchDetachedVm(
       // ignore: the VM is unusable anyway
     }
     throw err;
+  }
+}
+
+// Copy the rendered skill files from the host into the guest worktree at
+// `.pi/skills/gondolin`. Best effort: a copy failure must not fail the VM
+// launch — the skills are auxiliary, and the guest git status stays clean
+// because `.pi/` is in .git/info/exclude (see index.ts).
+async function copySkillsToGuest(
+  vm: VM,
+  skillsDir: string | undefined,
+  branch: string,
+): Promise<void> {
+  if (!skillsDir) return;
+  let files: string[];
+  try {
+    files = fs
+      .readdirSync(skillsDir)
+      .filter((f) => f.endsWith(".md"));
+  } catch {
+    return;
+  }
+  if (files.length === 0) return;
+  try {
+    const guestDir = guestSkillsDir(branch);
+    await vm.fs.mkdir(guestDir, { recursive: true });
+    for (const file of files) {
+      await vm.fs.writeFile(
+        `${guestDir}/${file}`,
+        fs.readFileSync(path.join(skillsDir, file)),
+      );
+    }
+  } catch {
+    // Best effort, see above.
   }
 }
 
@@ -260,6 +307,7 @@ export interface GondolinSandbox {
 export function createSandbox(
   localCwd: string,
   localGitDir: string,
+  opts: { skillsDir?: string } = {},
 ): GondolinSandbox {
   let vm: VM | null = null;
   let branch: string | null = null;
@@ -274,6 +322,7 @@ export function createSandbox(
       const created = await launchDetachedVm(requested, {
         localCwd,
         localGitDir,
+        skillsDir: opts.skillsDir,
         onNotice: (message) => ctx?.ui.notify(message, "info"),
       });
       vm = created;

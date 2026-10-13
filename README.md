@@ -103,11 +103,18 @@ loads it.
 ### Skills as templates
 
 The package's `skills/` directory holds skill **templates**, not finished skills. At
-load time the extension serves them via `resources_discover`: each `.md` file is
-rendered with a context derived from the effective config, and the rendered output is
-returned as the skill path. This keeps environment-specific info (which hosts are
+load time each `.md` file is rendered with a context derived from the effective
+config into the repo's `.pi/skills/gondolin` directory, which the extension serves via
+`resources_discover`. This keeps environment-specific info (which hosts are
 reachable, which secrets are wired in, which features are on) out of the system prompt
 and into on-demand skill content instead.
+
+The rendered files live **in the repo**, not in a temp dir, on purpose: pi's skill
+loader reads them on the host, while the agent reads them from inside the sandbox —
+so the skill paths listed in the prompt are host repo paths that map into the guest
+workspace (`.pi/skills/gondolin` in the worktree), where the files are copied at VM
+launch. `.pi/` is added to `.git/info/exclude` so the rendered files never show up in
+git status.
 
 The available template variables are:
 

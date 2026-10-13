@@ -90,6 +90,16 @@ and subagent management instructions are not in the system prompt or the preambl
 they ship as skills (`skills/sandbox.md`, `skills/subagents.md`) that pi loads from
 this package, so they only cost tokens when the agent loads the skill.
 
+The skill templates are rendered at load time into the repo's
+`.pi/skills/gondolin` directory (a stable host path under the repo root) and served
+via `resources_discover`. The location is deliberate: pi's skill loader reads the
+front matter on the host, while the agent reads the skill files from inside the
+sandbox — so the paths listed in the prompt are host repo paths that `toGuestPath`
+maps into the guest workspace, and `launchDetachedVm` copies the rendered files into
+each worktree at `.pi/skills/gondolin` on VM launch. `.pi/` is appended to
+`.git/info/exclude` (the guest shares the host's .git, so the exclude applies to both
+views) so the rendered files never show up in git status.
+
 ## VM lifecycle
 
 - `createSandbox` (`src/vm.ts`) is a single-VM wrapper: `launch(branch)` returns the
