@@ -69,6 +69,12 @@ the tool call blocks on the in-flight launch (`ensureVm` in `vm.ts`) and the age
 continues as soon as the VM is ready. A launch failure is surfaced as a notice even if the
 turn never calls a tool.
 
+To keep the concurrent startup from feeling jarring, the VM's boot logs are kept out
+of the transcript: while the VM launches, a widget above the editor (next to the
+"Working" spinner) shows an animated spinner, the branch name, and the latest boot log
+line. It is cleared the moment the VM is ready, leaving a single "Gondolin VM ready"
+line in the transcript — so the startup logs never mix with the first turn's output.
+
 ### Subagents
 
 The agent can delegate work to subagents, each running in its own **detached sandbox
