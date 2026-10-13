@@ -1,0 +1,9 @@
+{
+    "developMode": true,
+    "github": [
+        {"host": "github.com", "ghCliToken": "GH_TOKEN", "magicDir": true}
+    ],
+    "postBuild": {
+        "commands": ["apk add nodejs npm"]
+    }
+}
