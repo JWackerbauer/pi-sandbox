@@ -63,12 +63,29 @@ with wrappers that route their file operations into the guest (implementations i
   `createHttpHooks` wires the configured `secrets` in, and `env` entries are merged
   under the secret placeholders so a plain env value can never shadow a secret's
   guest-visible placeholder.
-- **Lazy start** — each wrapped tool calls `sandbox.ensureVm()` first. If the VM is
-  already up it is returned; if a launch is in flight (e.g. started by
-  `/build-in-sandbox` in parallel with the first turn) `ensureVm()` awaits that
-  in-flight launch; only if nothing is running does it launch the default branch
-  `gondolin-test`. This is what lets the first turn stream its response while the VM
-  boots — a tool call blocks on the VM exactly as long as necessary.
+- **Stable system prompt** — everything that modifies the system prompt is
+  registered at load time, so it is built once at session start and never
+  changed mid-session (a mid-session tool registration rebuilds the prompt
+  and invalidates the inference prefix cache). The wrapped read/write/edit/
+  bash tools are registered as replacements for the built-ins — only their
+  `execute` differs, so their prompt entries are byte-identical. The three
+  subagent tools are registered from turn one too; before the sandbox is
+  entered they return "the sandbox is not active — run /build-in-sandbox
+  first". Skills are written at load time as **stubs** (real static front
+  matter + placeholder body): pi discovers skills only at session
+  start/reload and caches only the front matter — the body is re-read from
+  disk whenever the agent loads the skill. `enterSandbox()` renders the real
+  bodies in place over the stubs (same paths), so the system prompt stays
+  untouched. What `enterSandbox()` still registers at entry: the subagent
+  manager, the `session_shutdown` cleanup, and user-`!` routing (none of
+  which touch the prompt).
+- **Tool routing** — each wrapped tool checks the sandbox state. If the VM
+  is already up it is used; if a launch is in flight (e.g. started by
+  `/build-in-sandbox` in parallel with the first turn) `requireVm()` awaits
+  that in-flight launch; if nothing is active (sandbox never entered, or a
+  launch failed) the tool runs locally on the host. This is what lets the
+  first turn stream its response while the VM boots — a tool call blocks on
+  the VM exactly as long as necessary.
 
 The agent is told about the sandbox via a **preamble**, not by modifying the system
 prompt (a modified system prompt invalidates the inference prefix cache on the
@@ -80,11 +97,9 @@ distinct message role ahead of the first sandbox user prompt, invisible in the U
 It tells the model that the parameters of its ongoing session have changed: it is in
 `/<branch>` on its own branch, that only the git repository is persistent, that it
 must commit its work to its branch and ask the user to review & merge, and which
-skills carry the further detail. It is sent from three entry points: the
-`/build-in-sandbox` command (ahead of the first user prompt), `session_start`
-(resuming/reloading/forking a sandbox session refreshes the context, covering config
-changes), and the wrapped tools' lazy `ensureVm()` (a session that reaches the sandbox
-without `/build-in-sandbox` gets the preamble when the first launch starts).
+skills carry the further detail. It is sent from two entry points: the `/build-in-sandbox` command (ahead of the
+first user prompt) and `session_start` (resuming/reloading/forking a sandbox session
+refreshes the context, covering config changes).
 
 Environment-specific details (scratch mounts, develop mode, wired-in secrets/hosts,
 GitHub access) and subagent management instructions are not in the system prompt or
@@ -113,9 +128,8 @@ for the tradeoffs (worktree copy, guest read-only mount, host-serve).
   running VM if it is already for that branch, otherwise closes any other VM and
   launches a fresh one; concurrent launches of the same branch share one in-flight
   promise. The branch is recorded as soon as a launch starts (so the preamble and
-  other readers see it while the VM boots). `ensureVm()` returns the running VM if any,
-  otherwise awaits an in-flight launch, and only launches the default branch if nothing
-  is running.
+  other readers see it while the VM boots). `requireVm()` returns the running VM if
+  any, otherwise awaits an in-flight launch, and throws if nothing is running.
 - `launchDetachedVm` is independent of the wrapper, so several VMs can run at the same
   time (one per branch/worktree) — this is what subagents use.
 - On a failed launch the half-configured VM is closed so a retry starts clean.
@@ -136,10 +150,11 @@ for the tradeoffs (worktree copy, guest read-only mount, host-serve).
 - The work branch is stored as a custom session entry (`gondolin.sandbox`) — custom
   entries are not sent to the LLM.
 - On `session_start` (resume, reload, fork), the extension finds the most recent
-  sandbox entry in the session branch and relaunches the VM for the same branch, so
-  `pi -c` / `/resume` continues where you left off. The session is renamed
-  `gondolin: <branch>` so it is recognizable in `/resume` (the name is cosmetic; the
-  branch is what is persisted).
+  sandbox entry in the session branch, activates the sandbox (see
+  [Stable system prompt](#tool-redirection)), and relaunches the VM for the same
+  branch, so `pi -c` / `/resume` continues where you left off. The session is
+  renamed `gondolin: <branch>` so it is recognizable in `/resume` (the name is
+  cosmetic; the branch is what is persisted).
 - On `session_shutdown` the VM is closed (see [VM lifecycle](#vm-lifecycle)).
 
 ## Branch naming

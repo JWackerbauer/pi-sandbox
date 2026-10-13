@@ -28,8 +28,11 @@ This:
    `/<branch>` in the guest) **and starts the first agent turn concurrently** — see
    [Concurrent startup](#concurrent-startup).
 
-You can also just start using tools directly — the VM is started lazily on the first tool
-call, using the default branch `gondolin-test`.
+You can also just start pi normally: in a regular session the tools behave
+exactly as stock pi (the sandbox-specific behavior is inert until
+`/build-in-sandbox` is run or a sandbox session is resumed). The extension
+registers its tools and skills at session start, so the system prompt is
+built once and never modified mid-session.
 
 From the command line, start a normal interactive session that goes straight into the
 sandbox (useful for wrapper scripts):
@@ -64,7 +67,7 @@ pi '/build-in-sandbox <what do you want to build?>'
 VM startup is the slow part of `/build-in-sandbox`. The extension therefore starts the
 first turn and the VM launch **concurrently** — they have no dependency on one another.
 The model can stream its first response while the VM boots; when the turn needs a tool,
-the tool call blocks on the in-flight launch (`ensureVm` in `vm.ts`) and the agent loop
+the tool call blocks on the in-flight launch (`requireVm` in `vm.ts`) and the agent loop
 continues as soon as the VM is ready. A launch failure is surfaced as a notice even if the
 turn never calls a tool.
 
@@ -108,11 +111,15 @@ loads it.
 ### Skills as templates
 
 The package's `skills/` directory holds skill **templates**, not finished skills. At
-load time each `.md` file is rendered with a context derived from the effective
-config into a per-process host temp dir, which the extension serves via
-`resources_discover`. This keeps environment-specific info (which hosts are
+load time each `.md` file is written as a **stub** — its real (static, config-
+independent) front matter plus a placeholder body — into a per-process host temp dir,
+which the extension serves via `resources_discover`. When the sandbox is entered the
+real bodies are rendered in place (same paths) with a context derived from the
+effective config. This keeps environment-specific info (which hosts are
 reachable, which secrets are wired in, which features are on) out of the system
-prompt and into on-demand skill content instead.
+prompt and into on-demand skill content — and because pi discovers skills only at
+session start and re-reads a skill's body from disk on demand, the stub → real-body
+swap never touches the system prompt.
 
 The rendered files live **on the host only**, on purpose: pi's skill loader reads
 the front matter on the host, and when the agent checks a skill it issues a plain
@@ -159,8 +166,8 @@ the agent that the parameters of its ongoing session have changed — new workin
 directory `/<branch>`, branch rules, persistence — and lists the skills to check for
 further information. It is rendered from `templates/preamble.md` (same template
 tags) with the work branch, the guest workspace, and the list of available skills,
-and is sent when `/build-in-sandbox` starts, when a sandbox session is resumed or
-reloaded, and when a tool lazily launches the VM.
+and is sent when `/build-in-sandbox` starts, and on `session_start` when a
+sandbox session is resumed, reloaded, or forked.
 
 ### Configuration — `gondolin.json`
 

@@ -25,7 +25,6 @@ import {
 import {
   DEFAULT_SUBAGENT_SIZING,
   DEFAULT_VM_SIZING,
-  DEFAULT_WORK_BRANCH,
   ghCliSecretName,
   guestWorkspace,
   GUEST_GIT_DIR,
@@ -324,8 +323,15 @@ export interface GondolinSandbox {
    * is closed and replaced.
    */
   launch: (branch: string, ctx?: ExtensionContext) => Promise<VM>;
-  /** The running VM, or one launched for the default work branch. */
-  ensureVm: (ctx?: ExtensionContext) => Promise<VM>;
+  /** True when a VM is running or a launch is in flight. */
+  readonly active: boolean;
+  /**
+   * The running VM, or the VM of an in-flight launch (e.g. started by
+   * /build-in-sandbox in parallel with the first turn). Throws if no VM
+   * exists and no launch is in flight — the sandbox must be started with
+   * /build-in-sandbox first.
+   */
+  requireVm: (ctx?: ExtensionContext) => Promise<VM>;
   /** Close the running VM, if any. */
   close: () => Promise<void>;
 }
@@ -411,13 +417,14 @@ export function createSandbox(
     }
   }
 
-  async function ensureVm(ctx?: ExtensionContext): Promise<VM> {
+  async function requireVm(ctx?: ExtensionContext): Promise<VM> {
     if (vm) return vm;
     // A launch is already in flight (e.g. /build-in-sandbox started it in
-    // parallel with the first turn): await that VM rather than starting a
-    // second one for the default branch.
+    // parallel with the first turn): await that VM.
     if (starting) return starting.promise;
-    return launch(DEFAULT_WORK_BRANCH, ctx);
+    throw new Error(
+      "gondolin: no VM is running — start the sandbox with /build-in-sandbox first",
+    );
   }
 
   // Selective worktree removal for this session's branch only. Runs in the
@@ -441,9 +448,12 @@ export function createSandbox(
 
   return {
     launch,
-    ensureVm,
+    requireVm,
     removeWorktree,
     close,
+    get active() {
+      return vm !== null || starting !== null;
+    },
     get vm() {
       return vm;
     },

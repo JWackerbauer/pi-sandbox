@@ -13,6 +13,12 @@ import type { GondolinConfig } from "./config";
 import { resolveMagicDirHosts, resolveGhCliHosts } from "./config-loader";
 import { renderTemplate, type TemplateContext } from "./skill-template";
 
+/** Placeholder body for skill stubs written before the sandbox starts. */
+const STUB_SKILL_BODY =
+  "The gondolin sandbox is not active in this session yet. Run `" +
+  "/build-in-sandbox` to start it — this skill's content is populated " +
+  "when the sandbox starts.";
+
 /**
  * Build the template context for gondolin skills from the effective config:
  * - `github_hosts` — every host the sandbox can reach: the union of the
@@ -45,6 +51,59 @@ export function buildSkillContext(config: GondolinConfig): TemplateContext {
 }
 
 /**
+ * Write the package's skill files with their real (static, config-
+ * independent) front matter and a placeholder body, into the same per-
+ * process temp dir that renderedSkillPaths() uses. pi discovers skills
+ * only at session start/reload and caches only the front matter (the
+ * body is re-read from disk whenever the agent loads the skill), so the
+ * stubs make the skills appear in the system prompt from turn one; the
+ * real bodies are rendered in place (same paths) when the sandbox is
+ * entered, with no system-prompt change.
+ */
+export function stubSkillPaths(templateDir: string): string {
+  const outDir = skillOutputDir();
+  fs.rmSync(outDir, { recursive: true, force: true });
+  fs.mkdirSync(outDir, { recursive: true });
+
+  let names: string[];
+  try {
+    names = fs.readdirSync(templateDir);
+  } catch {
+    // No template dir — leave the (empty) output dir in place and return it.
+    return outDir;
+  }
+
+  for (const name of names) {
+    if (!name.endsWith(".md")) continue;
+    const srcPath = path.join(templateDir, name);
+    let isFile = false;
+    try {
+      isFile = fs.statSync(srcPath).isFile();
+    } catch {
+      continue;
+    }
+    if (!isFile) continue;
+    const frontMatter = frontMatterBlock(fs.readFileSync(srcPath, "utf8"));
+    fs.writeFileSync(
+      path.join(outDir, name),
+      `${frontMatter}\n${STUB_SKILL_BODY}\n`,
+    );
+  }
+  return outDir;
+}
+
+/** The per-process output dir shared by stubSkillPaths/renderedSkillPaths. */
+function skillOutputDir(): string {
+  return path.join(os.tmpdir(), "gondolin-sandbox", `skills-${process.pid}`);
+}
+
+/** The leading `--- … ---` front matter block of a skill template. */
+function frontMatterBlock(source: string): string {
+  const match = source.match(/^---\n[\s\S]*?\n---\n?/);
+  return match ? match[0] : "";
+}
+
+/**
  * Render every `.md` template in `templateDir` with `context` into a fresh
  * per-process temp directory and return that directory's path (for use as a
  * `skillPaths` entry on resources_discover). Returns the dir even if it ends
@@ -54,8 +113,10 @@ export function renderedSkillPaths(
   templateDir: string,
   context: TemplateContext,
 ): string {
-  const outDir = path.join(os.tmpdir(), "gondolin-sandbox", `skills-${process.pid}`);
+  const outDir = skillOutputDir();
   // Fresh per-process output: clear any previous render, then recreate.
+  // When re-rendering over the stubs written at load time, the paths are
+  // unchanged, so the system prompt stays untouched.
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
 

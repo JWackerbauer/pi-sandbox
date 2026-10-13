@@ -21,7 +21,7 @@ export interface BuildCommandOptions {
 //
 // The VM launch and the first turn are started concurrently: they have no
 // dependency on one another. The model can stream its first response while
-// the VM boots; when the turn needs a tool, the tool wrapper's ensureVm()
+// the VM boots; when the turn needs a tool, the tool wrapper's requireVm()
 // awaits the in-flight launch (see vm.ts), so the agent loop blocks on the
 // VM exactly as long as necessary.
 export function registerBuildCommand(
@@ -81,7 +81,7 @@ export function registerBuildCommand(
 
       // Start the first turn and the VM launch concurrently. The model can
       // stream its response while the VM boots; the first tool call blocks
-      // on the in-flight launch (ensureVm in vm.ts).
+      // on the in-flight launch (requireVm in vm.ts).
       pi.sendUserMessage(prompt);
 
       const launch = sandbox.launch(branch, ctx);

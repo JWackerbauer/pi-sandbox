@@ -122,8 +122,11 @@ interface InternalRecord extends SubagentRecord {
 export interface SubagentManagerOptions {
   localCwd: string;
   localGitDir: string;
-  /** The parent session's work branch; subagent branches are based on it. */
-  parentBranch: () => string;
+  /**
+   * The parent session's work branch, or null when no parent VM is running;
+   * subagent branches are based on it (falling back to HEAD).
+   */
+  parentBranch: () => string | null;
   /** Called after any status change, so the host can refresh UI. */
   onStatusChange?: () => void;
   /**
@@ -192,9 +195,10 @@ export function createSubagentManager(
       // the shared .git, otherwise on the current HEAD commit, so the
       // parent can always merge the result back in cleanly.
       const parent = parentBranch();
-      const branchStart = (await refExists(parent))
-        ? parent
-        : await hostGit(["rev-parse", "HEAD"]);
+      const branchStart =
+        parent !== null && (await refExists(parent))
+          ? parent
+          : await hostGit(["rev-parse", "HEAD"]);
 
       const vm = await launchDetachedVm(branch, {
         localCwd,

@@ -52,10 +52,6 @@ export const SUBAGENT_LOOP_WINDOW = 3;
 // How many recent tool-call fingerprints to retain for loop detection.
 export const SUBAGENT_RECENT_TOOL_WINDOW = 5;
 
-// Work branch used when the sandbox starts outside of /build-in-sandbox
-// (e.g. a tool needs a VM before the user has requested a build).
-export const DEFAULT_WORK_BRANCH = "gondolin-test";
-
 // Limits for the branch-name summarizer model call.
 export const SUMMARY_MAX_TOKENS = 32;
 export const BRANCH_NAME_MAX_LENGTH = 40;

@@ -13,9 +13,7 @@ import {
   defineTool,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import type { VM } from "@earendil-works/gondolin";
 import {
-  DEFAULT_WORK_BRANCH,
   SANDBOX_ENTRY_TYPE,
   SANDBOX_PREAMBLE_TYPE,
   SUBAGENT_RESULT_TYPE,
@@ -25,11 +23,20 @@ import {
 import { loadGondolinConfig } from "./config-loader";
 import { loadDotEnv } from "./dotenv";
 import { renderPreamble, skillNames } from "./preamble";
-import { buildSkillContext, isHostServedPath, renderedSkillPaths } from "./skills";
+import {
+  buildSkillContext,
+  isHostServedPath,
+  renderedSkillPaths,
+  stubSkillPaths,
+} from "./skills";
 import { createSandbox } from "./vm";
 import { VmStartupWidget } from "./startup-widget";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
-import { createSubagentManager, formatSettledNotice } from "./subagents";
+import {
+  createSubagentManager,
+  formatSettledNotice,
+  type SubagentManager,
+} from "./subagents";
 import { createGondolinReadOps } from "./ops/read";
 import { createGondolinWriteOps } from "./ops/write";
 import { createGondolinEditOps } from "./ops/edit";
@@ -51,15 +58,16 @@ export default function (pi: ExtensionAPI) {
   const packageDir = path.resolve(__dirname, "..");
   const skillsTemplateDir = path.join(packageDir, "skills");
 
-  // Render the package's skill templates into a per-process host temp dir.
-  // The files live on the host only: pi's skill loader reads the front
-  // matter there, and the wrapped read tool serves the files to the agent
-  // (see below), so the sandbox worktree is never touched.
-  const config = loadGondolinConfig(localCwd, agentDir);
-  const skillsDir = renderedSkillPaths(
-    skillsTemplateDir,
-    buildSkillContext(config),
-  );
+  // Write the skill stubs at load time: real (static, config-independent)
+  // front matter plus a placeholder body. pi discovers skills only at
+  // session start/reload and caches only the front matter — the body is
+  // re-read from disk whenever the agent loads the skill — so the real
+  // bodies can be rendered in place (same paths) when the sandbox is
+  // entered, with no system-prompt change. The files live on the host only:
+  // pi's skill loader reads the front matter there, and the wrapped read
+  // tool serves the files to the agent (see below), so the sandbox worktree
+  // is never touched.
+  const skillsDir = stubSkillPaths(skillsTemplateDir);
 
   const localRead = createReadTool(localCwd);
   const localWrite = createWriteTool(localCwd);
@@ -115,24 +123,14 @@ export default function (pi: ExtensionAPI) {
     );
   }
 
-  // Lazily launch the VM (as the wrapped tools do) and, when this call
-  // started the launch, send the sandbox preamble — so a session that
-  // reaches the sandbox without /build-in-sandbox still gets the context.
-  async function ensureVmWithPreamble(ctx: ExtensionContext): Promise<VM> {
-    const vmWasUp = sandbox.vm !== null;
-    const vm = await sandbox.ensureVm(ctx);
-    if (!vmWasUp && sandbox.workspace) {
-      sendSandboxPreamble(ctx, sandbox.branch ?? DEFAULT_WORK_BRANCH);
-    }
-    return vm;
-  }
-
   // Latest ExtensionContext seen by a hook or tool, used to refresh the
   // status bar and the subagent spinner from background state changes.
   let lastCtx: ExtensionContext | undefined;
   let shuttingDown = false;
+  // The subagent manager exists only once the sandbox is entered.
+  let subagentManager: SubagentManager | null = null;
   // Braille spinner frames, animated while at least one subagent runs.
-  const spinnerFrames = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2866", "\u2827", "\u2807", "\u280f"];
+  const spinnerFrames = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u280f", "\u2866", "\u2827", "\u2807", "\u280f"];
   let spinnerTimer: NodeJS.Timeout | undefined;
   let spinnerFrame = 0;
   function touch(ctx: ExtensionContext): void {
@@ -144,7 +142,7 @@ export default function (pi: ExtensionAPI) {
     spinnerFrame = 0;
   }
   function renderSpinner(ctx: ExtensionContext): void {
-    const running = subagents.runningCount();
+    const running = subagentManager?.runningCount() ?? 0;
     if (running === 0) {
       stopSpinner();
       ctx.ui.setWidget("gondolin-subagents", undefined);
@@ -193,7 +191,7 @@ export default function (pi: ExtensionAPI) {
   }
   function updateStatus(ctx: ExtensionContext | undefined): void {
     if (!ctx || shuttingDown) return;
-    const running = subagents.runningCount();
+    const running = subagentManager?.runningCount() ?? 0;
     const parts = [`gondolin: ${sandbox.branch ?? "stopped"}`];
     if (running > 0) {
       parts.push(`${running} subagent${running > 1 ? "s" : ""} running`);
@@ -212,104 +210,103 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  // Detached subagent sessions: each gets its own VM and work branch, runs
-  // in the background, and is checked via the subagent_status tool.
-  // When a subagent settles, its result is proactively queued into this
-  // session as a custom message that triggers the agent's next turn — the
-  // agent does not have to poll for it.
-  const subagents = createSubagentManager({
-    localCwd,
-    localGitDir,
-    parentBranch: () => sandbox.branch ?? DEFAULT_WORK_BRANCH,
-    onStatusChange: () => updateStatus(lastCtx),
-    onSettled: (rec) => {
-      if (shuttingDown) return;
-      pi.sendMessage(
-        {
-          customType: SUBAGENT_RESULT_TYPE,
-          content: formatSettledNotice(rec),
-          display: true,
-          details: { id: rec.id, branch: rec.branch },
-        },
-        {
-          triggerTurn: true,
-          // Mid-turn: queued as a follow-up that starts a new turn once the
-          // current run finishes. Idle: appended and starts a turn now.
-          deliverAs: "followUp",
-        },
-      );
-    },
-    onDeferredStatus: (id, text) => {
-      if (shuttingDown) return;
-      pi.sendMessage(
-        {
-          customType: SUBAGENT_STATUS_TYPE,
-          content: text,
-          display: true,
-          details: { id },
-        },
-        {
-          triggerTurn: true,
-          deliverAs: "followUp",
-        },
-      );
-    },
-  });
-
-  // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
-  // and starts the first turn with the user's prompt (concurrently with
-  // the VM launch). onSandboxStart sends the sandbox preamble ahead of the
-  // first user prompt.
-  registerBuildCommand(pi, sandbox, {
-    onSandboxStart: sendSandboxPreamble,
-  });
-
-  // Bring the sandbox back up when a session that ran in the sandbox is
-  // started, resumed, reloaded, or forked. /build-in-sandbox persists the
-  // work branch as a custom entry.
-  pi.on("session_start", async (_event, ctx) => {
+  // Enter the sandbox: render the real skill bodies in place (over the
+  // stubs, same paths — no system-prompt change), create the subagent
+  // manager, and register the session-scoped hooks (shutdown cleanup,
+  // user-! routing). Runs once, from /build-in-sandbox or session_start
+  // (resuming a sandbox session).
+  let entered = false;
+  function enterSandbox(ctx: ExtensionContext): void {
+    if (entered) return;
+    entered = true;
     touch(ctx);
-    const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
-    if (branch) {
-      await sandbox.launch(branch, ctx);
-      // Refresh the sandbox context: the session resumes in the sandbox, and
-      // a fresh preamble is cheap and covers config changes since the
-      // original session (the stale one stays in the conversation history).
-      sendSandboxPreamble(ctx, branch, true);
-    }
-  });
 
-  // The VM is started lazily: by /build-in-sandbox (with the generated
-  // branch) or by the first tool call that needs it (default branch).
-  pi.on("session_shutdown", async (_event, ctx) => {
-    shuttingDown = true;
-    stopSpinner();
-    hideStartupWidget();
-    ctx.ui.setWidget("gondolin-subagents", undefined);
-    ctx.ui.setStatus(
-      "gondolin",
-      ctx.ui.theme.fg("muted", "gondolin: stopping"),
-    );
-    // Abort background subagents first: each cleans up its own worktree
-    // and VM while the guests are still up.
-    await subagents.shutdown();
-    // Remove this session's worktree (selective) while the guest still has it,
-    // so its shared .git registration is cleaned up. A crash skips this; the
-    // next start detects the leftover in prepare.sh and asks the user to
-    // prune it manually.
-    await sandbox.removeWorktree();
-    await sandbox.close();
-    ctx.ui.setStatus("gondolin", undefined);
-  });
+    // Render the real skill bodies over the stubs. The config is a tiny
+    // JSON read; loading it here (at entry, not load) keeps the stub path
+    // config-free and the render always current.
+    const config = loadGondolinConfig(localCwd, agentDir);
+    renderedSkillPaths(skillsTemplateDir, buildSkillContext(config));
 
-  // Serve gondolin's skills as rendered templates: the raw .md files in the
-  // package's skills/ directory are templates, rendered with a context
-  // derived from the config (available github hosts, secrets, features) at
-  // load time into a host temp dir (see above).
-  pi.on("resources_discover", () => {
-    return { skillPaths: [skillsDir] };
-  });
+    // Detached subagent sessions: each gets its own VM and work branch,
+    // runs in the background, and is checked via the subagent_status tool.
+    // When a subagent settles, its result is proactively queued into this
+    // session as a custom message that triggers the agent's next turn — the
+    // agent does not have to poll for it.
+    subagentManager = createSubagentManager({
+      localCwd,
+      localGitDir,
+      parentBranch: () => sandbox.branch,
+      onStatusChange: () => updateStatus(lastCtx),
+      onSettled: (rec) => {
+        if (shuttingDown) return;
+        pi.sendMessage(
+          {
+            customType: SUBAGENT_RESULT_TYPE,
+            content: formatSettledNotice(rec),
+            display: true,
+            details: { id: rec.id, branch: rec.branch },
+          },
+          {
+            triggerTurn: true,
+            // Mid-turn: queued as a follow-up that starts a new turn once the
+            // current run finishes. Idle: appended and starts a turn now.
+            deliverAs: "followUp",
+          },
+        );
+      },
+      onDeferredStatus: (id, text) => {
+        if (shuttingDown) return;
+        pi.sendMessage(
+          {
+            customType: SUBAGENT_STATUS_TYPE,
+            content: text,
+            display: true,
+            details: { id },
+          },
+          {
+            triggerTurn: true,
+            deliverAs: "followUp",
+          },
+        );
+      },
+    });
 
+    pi.on("session_shutdown", async (_event, ctx) => {
+      shuttingDown = true;
+      stopSpinner();
+      hideStartupWidget();
+      ctx.ui.setWidget("gondolin-subagents", undefined);
+      ctx.ui.setStatus(
+        "gondolin",
+        ctx.ui.theme.fg("muted", "gondolin: stopping"),
+      );
+      // Abort background subagents first: each cleans up its own worktree
+      // and VM while the guests are still up.
+      if (subagentManager) await subagentManager.shutdown();
+      // Remove this session's worktree (selective) while the guest still has it,
+      // so its shared .git registration is cleaned up. A crash skips this; the
+      // next start detects the leftover in prepare.sh and asks the user to
+      // prune it manually.
+      await sandbox.removeWorktree();
+      await sandbox.close();
+      ctx.ui.setStatus("gondolin", undefined);
+    });
+
+    // Run user `!` commands inside the VM too
+    pi.on("user_bash", (_event, _ctx) => {
+      if (!sandbox.vm || !sandbox.workspace) return;
+      return { operations: createGondolinBashOps(sandbox.vm, localCwd, sandbox.workspace) };
+    });
+
+    updateStatus(ctx);
+  }
+
+  // All tools are registered at load time (not in enterSandbox) so the
+  // system prompt is built once at session start and never modified:
+  // re-registering tools mid-session rebuilds it and invalidates the
+  // inference prefix cache. The wrapped tools are behaviorally inert until
+  // the sandbox is entered (they fall back to the local host tools), and
+  // the subagent tools report that the sandbox is not active.
   pi.registerTool({
     ...localRead,
     async execute(id, params, signal, onUpdate, ctx) {
@@ -326,7 +323,12 @@ export default function (pi: ExtensionAPI) {
       ) {
         return localRead.execute(id, params, signal, onUpdate);
       }
-      const activeVm = await ensureVmWithPreamble(ctx);
+      // No VM running and no launch in flight: the sandbox is not active,
+      // so the tool runs locally.
+      if (!sandbox.active) {
+        return localRead.execute(id, params, signal, onUpdate);
+      }
+      const activeVm = await sandbox.requireVm(ctx);
       const tool = createReadTool(localCwd, {
         operations: createGondolinReadOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -338,7 +340,10 @@ export default function (pi: ExtensionAPI) {
     ...localWrite,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await ensureVmWithPreamble(ctx);
+      if (!sandbox.active) {
+        return localWrite.execute(id, params, signal, onUpdate);
+      }
+      const activeVm = await sandbox.requireVm(ctx);
       const tool = createWriteTool(localCwd, {
         operations: createGondolinWriteOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -350,7 +355,10 @@ export default function (pi: ExtensionAPI) {
     ...localEdit,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await ensureVmWithPreamble(ctx);
+      if (!sandbox.active) {
+        return localEdit.execute(id, params, signal, onUpdate);
+      }
+      const activeVm = await sandbox.requireVm(ctx);
       const tool = createEditTool(localCwd, {
         operations: createGondolinEditOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -362,13 +370,31 @@ export default function (pi: ExtensionAPI) {
     ...localBash,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await ensureVmWithPreamble(ctx);
+      if (!sandbox.active) {
+        return localBash.execute(id, params, signal, onUpdate);
+      }
+      const activeVm = await sandbox.requireVm(ctx);
       const tool = createBashTool(localCwd, {
         operations: createGondolinBashOps(activeVm, localCwd, sandbox.workspace!),
       });
       return tool.execute(id, params, signal, onUpdate);
     },
   });
+
+  // Result for subagent tools called before the sandbox is entered.
+  function sandboxNotActive() {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text:
+            "gondolin: the sandbox is not active — run /build-in-sandbox first",
+        },
+      ],
+      details: {},
+      isError: true,
+    };
+  }
 
   // Spawn a detached sandbox session for a subagent. Same interface as
   // /build-in-sandbox: the prompt is summarized into a branch name, a
@@ -402,6 +428,7 @@ export default function (pi: ExtensionAPI) {
       }),
       execute: async (_id, params, _signal, _onUpdate, ctx) => {
         touch(ctx);
+        if (!subagentManager) return sandboxNotActive();
         if (params.prompt.trim().length === 0) {
           return {
             content: [
@@ -415,7 +442,7 @@ export default function (pi: ExtensionAPI) {
           };
         }
         try {
-          const rec = await subagents.spawn(params.prompt, ctx);
+          const rec = await subagentManager.spawn(params.prompt, ctx);
           return {
             content: [
               {
@@ -482,7 +509,8 @@ export default function (pi: ExtensionAPI) {
       }),
       execute: async (_id, params, _signal, _onUpdate, ctx) => {
         touch(ctx);
-        const text = subagents.status(params.id, params.defer_time);
+        if (!subagentManager) return sandboxNotActive();
+        const text = subagentManager.status(params.id, params.defer_time);
         return { content: [{ type: "text" as const, text }], details: {} };
       },
     }),
@@ -511,6 +539,7 @@ export default function (pi: ExtensionAPI) {
       }),
       execute: async (_id, params, _signal, _onUpdate, ctx) => {
         touch(ctx);
+        if (!subagentManager) return sandboxNotActive();
         const id = params.id.trim();
         if (id.length === 0) {
           return {
@@ -524,14 +553,14 @@ export default function (pi: ExtensionAPI) {
             isError: true,
           };
         }
-        const rec = subagents.abort(id);
+        const rec = subagentManager.abort(id);
         if (!rec) {
           return {
             content: [
               {
                 type: "text" as const,
                 text: `No subagent with id ${id} exists. Known ids: ${
-                  subagents.list().map((r) => r.id).join(", ") || "(none)"
+                  subagentManager.list().map((r) => r.id).join(", ") || "(none)"
                 }`,
               },
             ],
@@ -561,10 +590,40 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
-  // Run user `!` commands inside the VM too
-  pi.on("user_bash", (_event, _ctx) => {
-    if (!sandbox.vm || !sandbox.workspace) return;
-    return { operations: createGondolinBashOps(sandbox.vm, localCwd, sandbox.workspace) };
+  // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
+  // and starts the first agent turn with the user's prompt (concurrently with
+  // the VM launch). onSandboxStart activates the sandbox and sends the
+  // preamble ahead of the first user prompt.
+  registerBuildCommand(pi, sandbox, {
+    onSandboxStart: (ctx, branch) => {
+      enterSandbox(ctx);
+      sendSandboxPreamble(ctx, branch);
+    },
+  });
+
+  // Bring the sandbox back up when a session that ran in the sandbox is
+  // started, resumed, reloaded, or forked. /build-in-sandbox persists the
+  // work branch as a custom entry.
+  pi.on("session_start", async (_event, ctx) => {
+    touch(ctx);
+    const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
+    if (branch) {
+      enterSandbox(ctx);
+      await sandbox.launch(branch, ctx);
+      // Refresh the sandbox context: the session resumes in the sandbox, and
+      // a fresh preamble is cheap and covers config changes since the
+      // original session (the stale one stays in the conversation history).
+      sendSandboxPreamble(ctx, branch, true);
+    }
+  });
+
+  // Serve gondolin's skills as rendered templates: the raw .md files in the
+  // package's skills/ directory are templates, rendered with a context
+  // derived from the config (available github hosts, secrets, features).
+  // Stubs go in at load time (session start); the real bodies are rendered
+  // over them in enterSandbox.
+  pi.on("resources_discover", () => {
+    return { skillPaths: [skillsDir] };
   });
 }
 
