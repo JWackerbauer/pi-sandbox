@@ -101,7 +101,9 @@ workspace containment check. Repo-local skills need no interception: their host
 paths map into the guest worktree, which contains the tracked repo files (untracked
 local skill files are host-only and not visible in the guest). Writes and edits to
 the host-served dirs are rejected by the containment check, keeping the skills
-read-only from the agent's view.
+read-only from the agent's view. See
+[ADR: Serve skill files to the agent from the host, not the guest](ADR-skill-serving.md)
+for the tradeoffs (worktree copy, guest read-only mount, host-serve).
 
 ## VM lifecycle
 
