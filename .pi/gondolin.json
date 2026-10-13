@@ -1,8 +1,10 @@
 {
+    "$schema":"https://raw.githubusercontent.com/JWackerbauer/pi-sandbox/main/gondolin.schema.json",
     "developMode": true,
     "github": [
         {"host": "github.com", "ghCliToken": "GH_TOKEN", "magicDir": true}
     ],
+    "coAuthor": true,
     "postBuild": {
         "commands": ["apk add nodejs npm"]
     }
