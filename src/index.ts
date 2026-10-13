@@ -13,15 +13,18 @@ import {
   defineTool,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import type { VM } from "@earendil-works/gondolin";
 import {
   DEFAULT_WORK_BRANCH,
   SANDBOX_ENTRY_TYPE,
+  SANDBOX_PREAMBLE_TYPE,
   SUBAGENT_RESULT_TYPE,
   SUBAGENT_STATUS_TYPE,
   type SandboxEntryData,
 } from "./config";
 import { loadGondolinConfig } from "./config-loader";
 import { loadDotEnv } from "./dotenv";
+import { renderPreamble, skillNames } from "./preamble";
 import { buildSkillContext, renderedSkillPaths } from "./skills";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
@@ -48,6 +51,53 @@ export default function (pi: ExtensionAPI) {
   const localBash = createBashTool(localCwd);
 
   const sandbox = createSandbox(localCwd, localGitDir);
+
+  // Package root and the skills template dir, shared by the preamble and
+  // the resources_discover hook below.
+  const packageDir = path.resolve(__dirname, "..");
+  const skillsTemplateDir = path.join(packageDir, "skills");
+
+  // Send the sandbox preamble: a non-display custom message telling the
+  // agent that its session parameters have changed (new cwd, branch,
+  // persistence rules) and which skills carry the further detail. Sent in
+  // place of modifying the system prompt — the latter invalidates the
+  // inference prefix cache. No triggerTurn: the preamble only appends
+  // context; the next user message starts the turn. One preamble per branch
+  // per session (force bypasses the guard), so the first tool call awaiting
+  // /build-in-sandbox's in-flight launch does not duplicate it.
+  let preambleSentFor: string | null = null;
+  function sendSandboxPreamble(
+    ctx: ExtensionContext,
+    branch: string,
+    force = false,
+  ): void {
+    if (!force && preambleSentFor === branch) return;
+    preambleSentFor = branch;
+    pi.sendMessage(
+      {
+        customType: SANDBOX_PREAMBLE_TYPE,
+        content: renderPreamble(
+          packageDir,
+          branch,
+          skillNames(skillsTemplateDir),
+        ),
+        display: false,
+        details: { branch },
+      },
+    );
+  }
+
+  // Lazily launch the VM (as the wrapped tools do) and, when this call
+  // started the launch, send the sandbox preamble — so a session that
+  // reaches the sandbox without /build-in-sandbox still gets the context.
+  async function ensureVmWithPreamble(ctx: ExtensionContext): Promise<VM> {
+    const vmWasUp = sandbox.vm !== null;
+    const vm = await sandbox.ensureVm(ctx);
+    if (!vmWasUp && sandbox.workspace) {
+      sendSandboxPreamble(ctx, sandbox.branch ?? DEFAULT_WORK_BRANCH);
+    }
+    return vm;
+  }
 
   // Latest ExtensionContext seen by a hook or tool, used to refresh the
   // status bar and the subagent spinner from background state changes.
@@ -158,8 +208,11 @@ export default function (pi: ExtensionAPI) {
 
   // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
   // and starts the first turn with the user's prompt (concurrently with
-  // the VM launch).
-  registerBuildCommand(pi, sandbox);
+  // the VM launch). onSandboxStart sends the sandbox preamble ahead of the
+  // first user prompt.
+  registerBuildCommand(pi, sandbox, {
+    onSandboxStart: sendSandboxPreamble,
+  });
 
   // Bring the sandbox back up when a session that ran in the sandbox is
   // started, resumed, reloaded, or forked. /build-in-sandbox persists the
@@ -169,6 +222,10 @@ export default function (pi: ExtensionAPI) {
     const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
     if (branch) {
       await sandbox.launch(branch, ctx);
+      // Refresh the sandbox context: the session resumes in the sandbox, and
+      // a fresh preamble is cheap and covers config changes since the
+      // original session (the stale one stays in the conversation history).
+      sendSandboxPreamble(ctx, branch, true);
     }
   });
 
@@ -200,10 +257,9 @@ export default function (pi: ExtensionAPI) {
   // that environment-specific info lives in on-demand skill content instead
   // of the system prompt.
   pi.on("resources_discover", () => {
-    const templateDir = path.join(path.resolve(__dirname), "..", "skills");
     const config = loadGondolinConfig(localCwd, agentDir);
     const context = buildSkillContext(config);
-    const dir = renderedSkillPaths(templateDir, context);
+    const dir = renderedSkillPaths(skillsTemplateDir, context);
     return { skillPaths: [dir] };
   });
 
@@ -211,7 +267,7 @@ export default function (pi: ExtensionAPI) {
     ...localRead,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createReadTool(localCwd, {
         operations: createGondolinReadOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -223,7 +279,7 @@ export default function (pi: ExtensionAPI) {
     ...localWrite,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createWriteTool(localCwd, {
         operations: createGondolinWriteOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -235,7 +291,7 @@ export default function (pi: ExtensionAPI) {
     ...localEdit,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createEditTool(localCwd, {
         operations: createGondolinEditOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -247,7 +303,7 @@ export default function (pi: ExtensionAPI) {
     ...localBash,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createBashTool(localCwd, {
         operations: createGondolinBashOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -450,26 +506,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("user_bash", (_event, _ctx) => {
     if (!sandbox.vm || !sandbox.workspace) return;
     return { operations: createGondolinBashOps(sandbox.vm, localCwd, sandbox.workspace) };
-  });
-
-  // Replace the CWD section in the system prompt so the model sees /workspace
-  // and knows that only the git repository is persistent.
-  pi.on("before_agent_start", async (event, ctx) => {
-    touch(ctx);
-    // Do NOT await the VM here: the first turn must be able to start (and
-    // stream its response) while the VM is still booting. The CWD section
-    // only needs the branch, which is known as soon as the launch starts
-    // (see vm.ts). Tool calls gate on the VM via ensureVm() instead.
-    // Environment-specific details (scratch mounts, develop mode, wired-in
-    // secrets/hosts) live in the `sandbox` skill (see resources_discover
-    // above) instead of the system prompt.
-    event.systemPromptOptions.sections.cwd =
-      `You are working in a gondolin sandbox; cwd: ${sandbox.workspace} (a git worktree owned by you, branch: ` +
-      `${sandbox.branch ?? DEFAULT_WORK_BRANCH})\n` +
-      `You share the source git repository with the user, the user can review & merge your changes on their host. ` +
-      `Do not commit to any other branch; do not merge your branch. Ask the user to review & merge instead.\n` +
-      `The shared git repository is the ONLY persistent storage in your workspace; the rest of the filesystem is ephemeral. ` +
-      `You must commit all relevant work to your branch (${sandbox.branch ?? DEFAULT_WORK_BRANCH}) otherwise it will be lost.\n`;
   });
 }
 

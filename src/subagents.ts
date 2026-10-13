@@ -22,6 +22,7 @@ import {
   SUBAGENT_RECENT_TOOL_WINDOW,
   SUBAGENT_STUCK_IDLE_MS,
 } from "./config";
+import { loadGondolinConfig } from "./config-loader";
 import { createGondolinBashOps } from "./ops/bash";
 import { createGondolinEditOps } from "./ops/edit";
 import { createGondolinReadOps } from "./ops/read";

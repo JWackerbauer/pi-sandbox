@@ -28,6 +28,12 @@ export interface SandboxEntryData {
   branch: string;
 }
 
+// Custom message type of the sandbox preamble: the context sent (as a
+// non-display custom message) when a session switches into the sandbox, in
+// place of modifying the system prompt (which would invalidate the inference
+// prefix cache).
+export const SANDBOX_PREAMBLE_TYPE = "gondolin.sandbox-preamble";
+
 // Custom message type of the proactive subagent settlement notice, queued
 // into the parent session when a subagent finishes.
 export const SUBAGENT_RESULT_TYPE = "gondolin.subagent-result";

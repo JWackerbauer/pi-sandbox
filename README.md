@@ -120,6 +120,19 @@ Sections (`{{#name}} … {{/name}}` when truthy, `{{^name}} … {{/name}}` when 
 template show or hide whole blocks based on the config, e.g. the `sandbox` skill lists
 reachable hosts only when any are configured.
 
+### The sandbox preamble
+
+Entering the sandbox does **not** modify the system prompt — a modified system prompt
+invalidates the inference prefix cache. Instead, the extension sends a **preamble**: a
+non-display custom message (invisible in the UI, distinct from your prompt in the
+conversation) that is attached ahead of the first sandbox turn's user prompt. It tells
+the agent that the parameters of its ongoing session have changed — new working
+directory `/<branch>`, branch rules, persistence — and lists the skills to check for
+further information. It is rendered from `templates/preamble.md` (same template
+tags) with the work branch, the guest workspace, and the list of available skills,
+and is sent when `/build-in-sandbox` starts, when a sandbox session is resumed or
+reloaded, and when a tool lazily launches the VM.
+
 ### Configuration — `gondolin.json`
 
 The extension reads a `gondolin.json` from two places: `~/.pi/agent/gondolin.json`
