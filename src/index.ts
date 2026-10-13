@@ -27,6 +27,7 @@ import { loadDotEnv } from "./dotenv";
 import { renderPreamble, skillNames } from "./preamble";
 import { buildSkillContext, isHostServedPath, renderedSkillPaths } from "./skills";
 import { createSandbox } from "./vm";
+import { VmStartupWidget } from "./startup-widget";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
 import { createGondolinReadOps } from "./ops/read";
@@ -78,7 +79,11 @@ export default function (pi: ExtensionAPI) {
     path.join(os.homedir(), ".agents", "skills"),
   ];
 
-  const sandbox = createSandbox(localCwd, localGitDir);
+  const sandbox = createSandbox(localCwd, localGitDir, {
+    onLaunchStart: (branch) => showStartupWidget(branch),
+    onNotice: (_branch, message) => updateStartupLine(message),
+    onLaunchSettled: () => hideStartupWidget(),
+  });
 
   // Send the sandbox preamble: a non-display custom message telling the
   // agent that its session parameters have changed (new cwd, branch,
@@ -163,6 +168,28 @@ export default function (pi: ExtensionAPI) {
     spinnerTimer = setInterval(() => {
       if (lastCtx) renderSpinner(lastCtx);
     }, 80);
+  }
+
+  // VM startup progress widget: an animated spinner plus the latest boot
+  // log line, above the editor (next to the "Working" spinner). Shown
+  // while the main VM launches, cleared when it is ready. Keeping the
+  // boot logs out of the transcript means they never mix with the first
+  // turn's output.
+  let startupWidget: VmStartupWidget | undefined;
+  function showStartupWidget(branch: string): void {
+    if (!lastCtx || startupWidget) return;
+    lastCtx.ui.setWidget("gondolin-startup", (tui, theme) => {
+      startupWidget = new VmStartupWidget(tui, theme, branch);
+      return startupWidget;
+    });
+  }
+  function updateStartupLine(message: string): void {
+    if (startupWidget) startupWidget.latestLine = message;
+  }
+  function hideStartupWidget(): void {
+    if (!startupWidget) return;
+    startupWidget = undefined;
+    if (lastCtx) lastCtx.ui.setWidget("gondolin-startup", undefined);
   }
   function updateStatus(ctx: ExtensionContext | undefined): void {
     if (!ctx || shuttingDown) return;
@@ -257,6 +284,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     shuttingDown = true;
     stopSpinner();
+    hideStartupWidget();
     ctx.ui.setWidget("gondolin-subagents", undefined);
     ctx.ui.setStatus(
       "gondolin",
