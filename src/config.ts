@@ -1,5 +1,3 @@
-import path from "node:path";
-
 // Sandbox configuration: fixed guest layout and git identity.
 //
 // The guest mounts the host's .git at GUEST_GIT_DIR and checks out a work
@@ -17,21 +15,6 @@ export function guestWorkspace(branch: string): string {
 export const GUEST_GIT_DIR = "/source/.git";
 export const GIT_HOOKS_DIR = "/root/.git/hooks";
 export const PREPARE_SCRIPT = "/prepare.sh";
-
-// The rendered gondolin skills live in a `.pi/skills/gondolin` directory:
-// on the host under the repo root (so pi's skill loader can read the front
-// matter and the paths listed in the prompt are host repo paths), and in
-// the guest inside the worktree at the mapped location (so the agent can
-// read the skill files — see guest-path.ts). `.pi/` is added to
-// .git/info/exclude so the rendered files never show up in git status.
-/** Host directory holding the rendered gondolin skills (under the repo root). */
-export function hostSkillsDir(localCwd: string): string {
-  return path.join(localCwd, ".pi", "skills", "gondolin");
-}
-/** Guest directory holding the rendered gondolin skills (in the worktree). */
-export function guestSkillsDir(branch: string): string {
-  return `${guestWorkspace(branch)}/.pi/skills/gondolin`;
-}
 
 // Prefix for session names of sandbox sessions, so they are recognizable
 // in the /resume menu. The work branch itself is persisted separately

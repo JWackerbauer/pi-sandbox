@@ -104,17 +104,18 @@ loads it.
 
 The package's `skills/` directory holds skill **templates**, not finished skills. At
 load time each `.md` file is rendered with a context derived from the effective
-config into the repo's `.pi/skills/gondolin` directory, which the extension serves via
+config into a per-process host temp dir, which the extension serves via
 `resources_discover`. This keeps environment-specific info (which hosts are
-reachable, which secrets are wired in, which features are on) out of the system prompt
-and into on-demand skill content instead.
+reachable, which secrets are wired in, which features are on) out of the system
+prompt and into on-demand skill content instead.
 
-The rendered files live **in the repo**, not in a temp dir, on purpose: pi's skill
-loader reads them on the host, while the agent reads them from inside the sandbox —
-so the skill paths listed in the prompt are host repo paths that map into the guest
-workspace (`.pi/skills/gondolin` in the worktree), where the files are copied at VM
-launch. `.pi/` is added to `.git/info/exclude` so the rendered files never show up in
-git status.
+The rendered files live **on the host only**, on purpose: pi's skill loader reads
+the front matter on the host, and when the agent checks a skill it issues a plain
+`read` tool call on the listed path — which the wrapped `read` tool intercepts and
+serves from the host. The sandbox worktree is never touched, so there is no risk of
+colliding with repo-local files under `.pi/`. The skills are read-only from the
+agent's view: writes and edits to the skills dir are rejected by the workspace
+containment check.
 
 The available template variables are:
 

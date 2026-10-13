@@ -1,13 +1,13 @@
 // Builds the template context for gondolin's skill templates and renders the
-// package's `skills/` templates into the repo's `.pi/skills/gondolin`
-// directory (see config.ts hostSkillsDir). The rendered directory is
-// returned for use as a `skillPaths` entry on resources_discover (see
-// index.ts), so environment-specific info lives in on-demand skill content
-// instead of the system prompt. The files are also copied into each guest
-// worktree at VM launch (see vm.ts), so the agent can read them from inside
-// the sandbox.
+// package's `skills/` templates into a per-process temp directory. The
+// rendered directory is returned for use as a `skillPaths` entry on
+// resources_discover (see index.ts), so environment-specific info lives in
+// on-demand skill content instead of the system prompt. The files live on
+// the host only; the wrapped read tool serves them to the agent (see
+// index.ts), so the sandbox worktree is never touched.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { GondolinConfig } from "./config";
 import { renderTemplate, type TemplateContext } from "./skill-template";
@@ -36,16 +36,17 @@ export function buildSkillContext(config: GondolinConfig): TemplateContext {
 }
 
 /**
- * Render every `.md` template in `templateDir` with `context` into `outDir`
- * and return that directory's path (for use as a `skillPaths` entry on
- * resources_discover). Returns the dir even if it ends up empty.
+ * Render every `.md` template in `templateDir` with `context` into a fresh
+ * per-process temp directory and return that directory's path (for use as a
+ * `skillPaths` entry on resources_discover). Returns the dir even if it ends
+ * up empty.
  */
 export function renderedSkillPaths(
   templateDir: string,
   context: TemplateContext,
-  outDir: string,
 ): string {
-  // Fresh output: clear any previous render, then recreate.
+  const outDir = path.join(os.tmpdir(), "gondolin-sandbox", `skills-${process.pid}`);
+  // Fresh per-process output: clear any previous render, then recreate.
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -74,4 +75,19 @@ export function renderedSkillPaths(
     fs.writeFileSync(path.join(outDir, name), rendered);
   }
   return outDir;
+}
+
+/**
+ * Whether `p` (resolved against `localCwd`) is the rendered skills
+ * directory itself or a file inside it. The wrapped read tool uses this to
+ * serve gondolin skills from the host (see index.ts); the guest never sees
+ * them, and the containment check keeps writes/edits out.
+ */
+export function isRenderedSkillPath(
+  localCwd: string,
+  p: string,
+  skillsDir: string,
+): boolean {
+  const resolved = path.resolve(localCwd, p);
+  return resolved === skillsDir || resolved.startsWith(skillsDir + path.sep);
 }

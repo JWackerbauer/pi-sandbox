@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -17,7 +16,6 @@ import { Type } from "@earendil-works/pi-ai";
 import type { VM } from "@earendil-works/gondolin";
 import {
   DEFAULT_WORK_BRANCH,
-  hostSkillsDir,
   SANDBOX_ENTRY_TYPE,
   SANDBOX_PREAMBLE_TYPE,
   SUBAGENT_RESULT_TYPE,
@@ -27,7 +25,7 @@ import {
 import { loadGondolinConfig } from "./config-loader";
 import { loadDotEnv } from "./dotenv";
 import { renderPreamble, skillNames } from "./preamble";
-import { buildSkillContext, renderedSkillPaths } from "./skills";
+import { buildSkillContext, isRenderedSkillPath, renderedSkillPaths } from "./skills";
 import { createSandbox } from "./vm";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
@@ -52,46 +50,22 @@ export default function (pi: ExtensionAPI) {
   const packageDir = path.resolve(__dirname, "..");
   const skillsTemplateDir = path.join(packageDir, "skills");
 
-  // Render the package's skill templates into the repo's
-  // `.pi/skills/gondolin` directory — a stable host path under the repo
-  // root. Pi's skill loader reads the front matter on the host, and the
-  // skill paths listed in the prompt are host repo paths that map into the
-  // guest workspace (see guest-path.ts); the files themselves are copied
-  // into each guest worktree at VM launch (see vm.ts), so the agent can
-  // read them from inside the sandbox. `.pi/` is excluded from git status
-  // below, so the rendered files never show up as untracked.
+  // Render the package's skill templates into a per-process host temp dir.
+  // The files live on the host only: pi's skill loader reads the front
+  // matter there, and the wrapped read tool serves the files to the agent
+  // (see below), so the sandbox worktree is never touched.
   const config = loadGondolinConfig(localCwd, agentDir);
   const skillsDir = renderedSkillPaths(
     skillsTemplateDir,
     buildSkillContext(config),
-    hostSkillsDir(localCwd),
   );
-
-  // Keep the project `.pi` directory (config + rendered skills) out of git
-  // status: the guest worktree shares this .git, so the exclude applies to
-  // both the host's and the guest's views. Best effort.
-  try {
-    const excludePath = path.join(localGitDir, "info", "exclude");
-    fs.mkdirSync(path.dirname(excludePath), { recursive: true });
-    const existing = fs.existsSync(excludePath)
-      ? fs.readFileSync(excludePath, "utf8")
-      : "";
-    if (!existing.split("\n").includes(".pi/")) {
-      fs.appendFileSync(
-        excludePath,
-        (existing === "" || existing.endsWith("\n") ? "" : "\n") + ".pi/\n",
-      );
-    }
-  } catch {
-    // Best effort: worst case the rendered files show up as untracked.
-  }
 
   const localRead = createReadTool(localCwd);
   const localWrite = createWriteTool(localCwd);
   const localEdit = createEditTool(localCwd);
   const localBash = createBashTool(localCwd);
 
-  const sandbox = createSandbox(localCwd, localGitDir, { skillsDir });
+  const sandbox = createSandbox(localCwd, localGitDir);
 
   // Send the sandbox preamble: a non-display custom message telling the
   // agent that its session parameters have changed (new cwd, branch,
@@ -290,7 +264,7 @@ export default function (pi: ExtensionAPI) {
   // Serve gondolin's skills as rendered templates: the raw .md files in the
   // package's skills/ directory are templates, rendered with a context
   // derived from the config (available github hosts, secrets, features) at
-  // load time into the repo's .pi/skills/gondolin directory (see above).
+  // load time into a host temp dir (see above).
   pi.on("resources_discover", () => {
     return { skillPaths: [skillsDir] };
   });
@@ -299,6 +273,18 @@ export default function (pi: ExtensionAPI) {
     ...localRead,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
+      // The rendered gondolin skills live on the host (the paths listed in
+      // the prompt are host temp-dir paths the guest cannot see). Serve
+      // them from the host with the plain read tool so the agent can check
+      // its skills; everything else routes to the guest. Writes/edits to
+      // the skills dir are still rejected by the containment check — the
+      // skills are read-only from the agent's view.
+      if (
+        typeof params.path === "string" &&
+        isRenderedSkillPath(localCwd, params.path, skillsDir)
+      ) {
+        return localRead.execute(id, params, signal, onUpdate);
+      }
       const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createReadTool(localCwd, {
         operations: createGondolinReadOps(activeVm, localCwd, sandbox.workspace!),
