@@ -43,8 +43,9 @@ pi '/build-in-sandbox <what do you want to build?>'
 - The status bar shows `gondolin: <branch>` while the sandbox runs, plus the number of
   running subagents.
 - The agent commits to its own branch (commits carry a `Co-Authored-By: pi-agent`
-  trailer). You review and merge on the host: `git log` / `git diff`, then
-  `git merge <branch>`.
+  trailer, enabled by default — set `"coAuthor": false` in your `gondolin.json`
+  to stop adding it). You review and merge on the host: `git log` / `git diff`,
+  then `git merge <branch>`.
 - Your user `!` bash commands run inside the guest too, so what the agent sees is what
   you see.
 - The workspace is ephemeral, but two scratch directories persist across VM restarts:
@@ -67,6 +68,12 @@ The model can stream its first response while the VM boots; when the turn needs 
 the tool call blocks on the in-flight launch (`ensureVm` in `vm.ts`) and the agent loop
 continues as soon as the VM is ready. A launch failure is surfaced as a notice even if the
 turn never calls a tool.
+
+To keep the concurrent startup from feeling jarring, the VM's boot logs are kept out
+of the transcript: while the VM launches, a widget above the editor (next to the
+"Working" spinner) shows an animated spinner, the branch name, and the latest boot log
+line. It is cleared the moment the VM is ready, leaving a single "Gondolin VM ready"
+line in the transcript — so the startup logs never mix with the first turn's output.
 
 ### Subagents
 
@@ -99,11 +106,62 @@ subagent usage guide (spawning, monitoring, aborting, merging) as on-demand skil
 content instead of permanent system prompt, so it only costs tokens when the agent
 loads it.
 
+### Skills as templates
+
+The package's `skills/` directory holds skill **templates**, not finished skills. At
+load time each `.md` file is rendered with a context derived from the effective
+config into a per-process host temp dir, which the extension serves via
+`resources_discover`. This keeps environment-specific info (which hosts are
+reachable, which secrets are wired in, which features are on) out of the system
+prompt and into on-demand skill content instead.
+
+The rendered files live **on the host only**, on purpose: pi's skill loader reads
+the front matter on the host, and when the agent checks a skill it issues a plain
+`read` tool call on the listed path — which the wrapped `read` tool intercepts and
+serves from the host. The same interception covers **global skills**
+(`~/.pi/agent/skills`, `~/.agents/skills`): they live outside the repo root, so they
+would fail the guest's workspace containment check; the agent reads them from the
+host instead. **Repo-local skills** (`<repo>/.pi/skills`, `<repo>/.agents/skills`)
+need no interception: their host paths map into the guest worktree, which contains
+the tracked repo files. The sandbox worktree is never touched by gondolin itself,
+so there is no risk of colliding with repo-local files under `.pi/`. Skills are
+read-only from the agent's view: writes and edits to the host-served dirs are
+rejected by the workspace containment check.
+
+The available template variables are:
+
+- `{{github_hosts}}` — every host the sandbox can reach: the union of the
+  `secrets[*].hosts` entries, the `magicDir` hosts, and the `ghCliToken` hosts
+  (e.g. `"github.com"`).
+- `{{magic_hosts}}` — the hosts with a magic dir enabled.
+- `{{gh_cli_hosts}}` — the hosts with the `gh` CLI installed in the guest.
+- `{{secrets}}` — the names of the configured secrets.
+- `{{scratch}}` — boolean; whether the scratch mounts are enabled.
+- `{{developMode}}` — boolean; whether the sandbox is in development mode.
+
+Sections (`{{#name}} … {{/name}}` when truthy, `{{^name}} … {{/name}}` when falsy) let a
+template show or hide whole blocks based on the config, e.g. the `sandbox` skill lists
+reachable hosts only when any are configured, and the `github` skill shows the magic-dir
+and `gh` CLI sections only when each is enabled.
+
 ### The bundled `github` skill
 
 The package also ships `skills/github.md`, which pi loads as a `github` skill: how to
 use the `/git` magic dir and the `gh` CLI to access the configured GitHub hosts. Only
 relevant when the `github` config is present (see below).
+
+### The sandbox preamble
+
+Entering the sandbox does **not** modify the system prompt — a modified system prompt
+invalidates the inference prefix cache. Instead, the extension sends a **preamble**: a
+non-display custom message (invisible in the UI, distinct from your prompt in the
+conversation) that is attached ahead of the first sandbox turn's user prompt. It tells
+the agent that the parameters of its ongoing session have changed — new working
+directory `/<branch>`, branch rules, persistence — and lists the skills to check for
+further information. It is rendered from `templates/preamble.md` (same template
+tags) with the work branch, the guest workspace, and the list of available skills,
+and is sent when `/build-in-sandbox` starts, when a sandbox session is resumed or
+reloaded, and when a tool lazily launches the VM.
 
 ### Configuration — `gondolin.json`
 
@@ -128,6 +186,7 @@ invalid files are treated as empty. All fields are optional:
   ],
   "scratch": true,
   "developMode": false,
+  "coAuthor": true,
   "postStartup": ["git submodule update --init"],
   "postBuild": {
     "copy": [{ "src": "./tool-config", "dest": "/opt/tool-config" }],
@@ -174,6 +233,11 @@ invalid files are treated as empty. All fields are optional:
     the generated `~/.config/gh/hosts.yml` and an env var), and the http hooks
     substitute the real token at egress. How the agent uses `gh` and the magic dir is
     documented in the bundled `github` skill (see [above](#the-bundled-github-skill)).
+- **`.env` — host environment file.** At startup the extension loads a host
+  `<repo>/.env` into the host's `process.env`, so its values are available for secret
+  resolution (a `secrets` entry with no `value` field falls back to the env var named by
+  the key). Existing environment variables are **not** overridden — the real environment
+  always wins over the file. Missing or unreadable files are ignored.
 - **`scratch` — scratch mounts.** Two host directories are mounted into every guest so
   files survive VM/session restarts (they live under the host's tempdir, not in the
   VM's ephemeral disk):
@@ -183,6 +247,10 @@ invalid files are treated as empty. All fields are optional:
 - **`developMode` — development feedback.** When `true`, the agent is told the sandbox
   is under development and asked to report any issues it had with the sandbox once it
   is done working. Default `false`.
+- **`coAuthor` — pi-agent co-author attribution.** When `true`, commits made inside the
+  guest carry a `Co-Authored-By: pi-agent <pi-agent@localhost>` trailer (added by a
+  prepare-commit-msg git hook installed at VM launch). Default `true`; set
+  `"coAuthor": false` to disable it.
 - **`postBuild` — custom image.** Baked into a custom image at startup: the stock
   `image/image.json` config is rebuilt with the section's `commands` run inside the
   rootfs after package installation (optionally after `copy` entries copy host files
@@ -219,5 +287,7 @@ lifecycle, sessions, subagent internals, GitHub access — see
 - [docs/architecture.md](docs/architecture.md) — how it works: guest setup, tool
   redirection, VM lifecycle, sessions, subagents, images
 - [skills/subagents.md](skills/subagents.md) — the bundled subagent usage skill
+- [skills/sandbox.md](skills/sandbox.md) — the sandbox skill template (rendered with
+  the config at load time)
 - [docs/RFC-devcontainer-images-and-makefile.md](docs/RFC-devcontainer-images-and-makefile.md) —
   deferred feature proposals

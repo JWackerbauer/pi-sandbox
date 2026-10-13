@@ -63,10 +63,14 @@ export interface SubagentManager {
    * given `id`). Does not wait: spawned subagents report themselves when they
    * finish, so there is no need to block. Each running subagent includes
    * activity diagnostics (elapsed time, last activity, recent tool calls) and
-   * heuristics that flag a subagent that appears stuck or looping. When
+   * heuristics that flag a subagent that appears stuck or looping. Settled
+   * subagents show only as a compact one-liner — their full result arrives
+   * via the settlement notice (or a `status` call with their id). When
    * `deferSeconds` > 0, the tool returns immediately and the host is asked
    * to deliver the status (recomputed when the timer fires) to the parent
-   * agent as a message after that delay — "check on it in N seconds".
+   * agent as a message after that delay — "check on it in N seconds". A
+   * scheduled check is cancelled if no subagent is still running once the
+   * last running subagent settles, so it never fires once everything is done.
    */
   status: (id?: string, deferSeconds?: number) => string;
   /**
@@ -279,6 +283,11 @@ export function createSubagentManager(
         // best effort
       }
       onStatusChange?.();
+      // Once no subagent is running, any scheduled deferred status checks
+      // are stale: cancel them so they never fire. Settled subagents are
+      // reported by their own settlement notice; a later spawn can schedule
+      // a fresh check.
+      if (runningCount() === 0) cancelDeferredChecks();
       resolveSettle();
       // Proactively deliver the result to the parent agent, unless the agent
       // has fetched it via results(). Deferred to a macrotask: a results()
@@ -391,6 +400,13 @@ export function createSubagentManager(
     pendingDeferred.add(handle);
   }
 
+  // Cancel every scheduled deferred status check so none of them fire. Called
+  // on shutdown and when the last running subagent settles.
+  function cancelDeferredChecks(): void {
+    for (const handle of pendingDeferred) clearTimeout(handle);
+    pendingDeferred.clear();
+  }
+
   // Abort a single subagent. Returns the public record (undefined if the id
   // is unknown). Aborting is best-effort and idempotent: disposing an
   // already-settled session is a no-op, and run()'s finally block performs
@@ -430,8 +446,7 @@ export function createSubagentManager(
     shuttingDown = true;
     // Cancel scheduled deferred status checks; they must not fire after the
     // parent session is gone.
-    for (const handle of pendingDeferred) clearTimeout(handle);
-    pendingDeferred.clear();
+    cancelDeferredChecks();
     // Wait for an in-flight spawn (VM launch) to finish first, then abort
     // every running session; each run() cleans up its worktree and VM.
     await spawnChain;
@@ -490,10 +505,13 @@ export function createSubagentManager(
     return lines.join("\n");
   }
 
-  // One subagent: full result when settled, activity diagnostics when running.
+  // One subagent: activity diagnostics while running; a compact one-liner
+  // once settled. A settled subagent is out of the status check — its full
+  // result arrives via the settlement notice (or a `status` call with its
+  // id), so the snapshot keeps only the terminal state.
   function describeRecord(r: InternalRecord): string {
     if (r.status === "running") return describeRunning(r);
-    return formatSubagentResult(r);
+    return `[${r.id}] branch: ${r.branch} — ${statusLabel(r.status)}`;
   }
 
   function describeRunning(r: InternalRecord): string {

@@ -1,7 +1,17 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestBranchName } from "../branch-name";
 import { SANDBOX_ENTRY_TYPE, SESSION_NAME_PREFIX } from "../config";
 import type { GondolinSandbox } from "../vm";
+
+export interface BuildCommandOptions {
+  /**
+   * Called with the new branch just before the first user prompt is sent.
+   * The default implementation (index.ts) sends the sandbox preamble — a
+   * non-display custom message telling the agent that its session
+   * parameters have changed, in place of modifying the system prompt.
+   */
+  onSandboxStart?: (ctx: ExtensionContext, branch: string) => void;
+}
 
 // /build-in-sandbox [prompt]
 //
@@ -17,6 +27,7 @@ import type { GondolinSandbox } from "../vm";
 export function registerBuildCommand(
   pi: ExtensionAPI,
   sandbox: GondolinSandbox,
+  opts: BuildCommandOptions = {},
 ): void {
   pi.registerCommand("build-in-sandbox", {
     description:
@@ -61,6 +72,12 @@ export function registerBuildCommand(
       // the sandbox for it. Custom entries are not sent to the LLM.
       pi.setSessionName(SESSION_NAME_PREFIX + branch);
       pi.appendEntry(SANDBOX_ENTRY_TYPE, { branch });
+
+      // Tell the agent its session parameters have changed: the sandbox
+      // preamble is a non-display custom message appended ahead of the
+      // first user prompt (no system prompt modification, so the inference
+      // prefix cache stays intact).
+      opts.onSandboxStart?.(ctx, branch);
 
       // Start the first turn and the VM launch concurrently. The model can
       // stream its response while the VM boots; the first tool call blocks

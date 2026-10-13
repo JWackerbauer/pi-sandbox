@@ -26,3 +26,11 @@ test("toGuestPath rejects paths escaping the workspace", () => {
   assert.throws(() => toGuestPath("/host/cwd", "/etc/passwd", WS), /escapes workspace/);
   assert.throws(() => toGuestPath("/host/cwd", `${WS}/../other`, WS), /escapes workspace/);
 });
+
+test("the rendered skill paths are rejected by the guest mapping (served from the host)", () => {
+  // The skill paths listed in the prompt are host temp-dir paths; the
+  // wrapped read tool intercepts them before the guest mapping (see
+  // index.ts), and anything that does reach the mapping is rejected.
+  const hostSkill = "/tmp/gondolin-sandbox/skills-1234/sandbox.md";
+  assert.throws(() => toGuestPath("/host/cwd", hostSkill, WS), /escapes workspace/);
+});

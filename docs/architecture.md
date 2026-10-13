@@ -69,25 +69,49 @@ with wrappers that route their file operations into the guest (implementations i
   `gondolin-test`. This is what lets the first turn stream its response while the VM
   boots — a tool call blocks on the VM exactly as long as necessary.
 
-The `before_agent_start` hook rewrites the CWD section of the system prompt so the
-model knows it is in `/<branch>` on its own branch, that only the git repository is
-persistent, that it must commit its work to its branch and ask the user to review &
-merge — and, when enabled, that the sandbox is in development mode (`developMode`) and
-that the scratch mounts exist and what they are for (the prompt only advertises the
-scratch mounts when they are actually mounted, i.e. `scratch` is not `false`). It does
-**not** await the VM: the branch is known as soon as the launch starts, so the first
-model call can begin while the VM is still booting.
+The agent is told about the sandbox via a **preamble**, not by modifying the system
+prompt (a modified system prompt invalidates the inference prefix cache on the
+inference side). The preamble is a template (`templates/preamble.md`, rendered by
+`src/preamble.ts` with the work branch, the guest workspace, and the list of the
+package's skills) that is sent as a **non-display custom message**
+(`pi.sendMessage` with `customType: gondolin.sandbox-preamble`, `display: false`) — a
+distinct message role ahead of the first sandbox user prompt, invisible in the UI.
+It tells the model that the parameters of its ongoing session have changed: it is in
+`/<branch>` on its own branch, that only the git repository is persistent, that it
+must commit its work to its branch and ask the user to review & merge, and which
+skills carry the further detail. It is sent from three entry points: the
+`/build-in-sandbox` command (ahead of the first user prompt), `session_start`
+(resuming/reloading/forking a sandbox session refreshes the context, covering config
+changes), and the wrapped tools' lazy `ensureVm()` (a session that reaches the sandbox
+without `/build-in-sandbox` gets the preamble when the first launch starts).
 
-Subagent management instructions are not in the system prompt; they ship as a skill
-(`skills/subagents.md`) that pi loads from this package, so they only cost tokens when
+Environment-specific details (scratch mounts, develop mode, wired-in secrets/hosts,
+GitHub access) and subagent management instructions are not in the system prompt or
+the preamble; they ship as skills (`skills/sandbox.md`, `skills/subagents.md`,
+`skills/github.md`) that pi loads from this package, so they only cost tokens when
 the agent loads the skill.
+
+The skill templates are rendered at load time into a per-process host temp dir and
+served via `resources_discover`. Pi's system prompt lists every skill by its **host
+file path**, and the agent loads a skill with a plain `read` call — so the wrapped
+`read` tool is the interception point for skills. It serves any read inside the
+host-served skill roots with the plain host read tool: the rendered gondolin skills
+(host temp dir) and the global skill roots (`<agentDir>/skills`,
+`~/.agents/skills`), which live outside the repo root and would fail the guest's
+workspace containment check. Repo-local skills need no interception: their host
+paths map into the guest worktree, which contains the tracked repo files (untracked
+local skill files are host-only and not visible in the guest). Writes and edits to
+the host-served dirs are rejected by the containment check, keeping the skills
+read-only from the agent's view. See
+[ADR: Serve skill files to the agent from the host, not the guest](ADR-skill-serving.md)
+for the tradeoffs (worktree copy, guest read-only mount, host-serve).
 
 ## VM lifecycle
 
 - `createSandbox` (`src/vm.ts`) is a single-VM wrapper: `launch(branch)` returns the
   running VM if it is already for that branch, otherwise closes any other VM and
   launches a fresh one; concurrent launches of the same branch share one in-flight
-  promise. The branch is recorded as soon as a launch starts (so the CWD section and
+  promise. The branch is recorded as soon as a launch starts (so the preamble and
   other readers see it while the VM boots). `ensureVm()` returns the running VM if any,
   otherwise awaits an in-flight launch, and only launches the default branch if nothing
   is running.
@@ -203,8 +227,13 @@ enable both):
   var name whose var is unset, so a sourced-but-not-exported shell variable fails at
   the config level (with a launch notice) instead of as a 401 deep in the guest.
 
-The enabled features are summarized in the system prompt (`githubPromptLine`) and
-detailed in the bundled `github` skill (`skills/github.md`).
+How the agent is told about the enabled features follows the skill-templating
+architecture (above): the bundled `github` skill (`skills/github.md`) is rendered
+with `magic_hosts` and `gh_cli_hosts` from the config, so its magic-dir and `gh` CLI
+sections appear only when each is enabled — that is how the main session learns about
+the feature. Subagents are created with `noSkills`, so they instead get a one-line
+summary in their system prompt (`githubPromptLine` in `src/github.ts`, wired through
+`src/subagents.ts`).
 
 ## Scratch mounts
 

@@ -13,20 +13,23 @@ import {
   defineTool,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import type { VM } from "@earendil-works/gondolin";
 import {
   DEFAULT_WORK_BRANCH,
-  GUEST_SCRATCH,
-  GUEST_SCRATCH_LOCAL,
   SANDBOX_ENTRY_TYPE,
+  SANDBOX_PREAMBLE_TYPE,
   SUBAGENT_RESULT_TYPE,
   SUBAGENT_STATUS_TYPE,
   type SandboxEntryData,
 } from "./config";
-import { loadGondolinConfig, resolveMagicDirHosts, resolveGhCliHosts } from "./config-loader";
+import { loadGondolinConfig } from "./config-loader";
+import { loadDotEnv } from "./dotenv";
+import { renderPreamble, skillNames } from "./preamble";
+import { buildSkillContext, isHostServedPath, renderedSkillPaths } from "./skills";
 import { createSandbox } from "./vm";
+import { VmStartupWidget } from "./startup-widget";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
 import { createSubagentManager, formatSettledNotice } from "./subagents";
-import { githubPromptLine } from "./github";
 import { createGondolinReadOps } from "./ops/read";
 import { createGondolinWriteOps } from "./ops/write";
 import { createGondolinEditOps } from "./ops/edit";
@@ -35,13 +38,94 @@ import { createGondolinBashOps } from "./ops/bash";
 export default function (pi: ExtensionAPI) {
   const localCwd = process.cwd();
   const localGitDir = `${localCwd}/.git`;
+  // The pi agent dir, where the global gondolin.json lives.
+  const agentDir = path.join(os.homedir(), ".pi", "agent");
+
+  // Load the host's .env into process.env so its values are available for
+  // secret resolution (see config-loader.ts resolveSecrets). Only variables
+  // not already set in the environment are added.
+  loadDotEnv(path.join(localCwd, ".env"));
+
+  // Package root and the skills template dir, shared by the preamble and
+  // the resources_discover hook below.
+  const packageDir = path.resolve(__dirname, "..");
+  const skillsTemplateDir = path.join(packageDir, "skills");
+
+  // Render the package's skill templates into a per-process host temp dir.
+  // The files live on the host only: pi's skill loader reads the front
+  // matter there, and the wrapped read tool serves the files to the agent
+  // (see below), so the sandbox worktree is never touched.
+  const config = loadGondolinConfig(localCwd, agentDir);
+  const skillsDir = renderedSkillPaths(
+    skillsTemplateDir,
+    buildSkillContext(config),
+  );
 
   const localRead = createReadTool(localCwd);
   const localWrite = createWriteTool(localCwd);
   const localEdit = createEditTool(localCwd);
   const localBash = createBashTool(localCwd);
 
-  const sandbox = createSandbox(localCwd, localGitDir);
+  // Host dirs served to the agent by the read tool instead of the guest:
+  // the rendered gondolin skills (host temp dir) and the global skill roots
+  // (pi's system prompt lists every skill by its host path — repo-local
+  // skills are under the repo root and map into the worktree, but global
+  // skills live outside it and would fail the containment check). Writes
+  // and edits to these dirs are still rejected by the containment check,
+  // so they stay read-only from the agent's view.
+  const hostServedSkillRoots = [
+    skillsDir,
+    path.join(agentDir, "skills"),
+    path.join(os.homedir(), ".agents", "skills"),
+  ];
+
+  const sandbox = createSandbox(localCwd, localGitDir, {
+    onLaunchStart: (branch) => showStartupWidget(branch),
+    onNotice: (_branch, message) => updateStartupLine(message),
+    onLaunchSettled: () => hideStartupWidget(),
+  });
+
+  // Send the sandbox preamble: a non-display custom message telling the
+  // agent that its session parameters have changed (new cwd, branch,
+  // persistence rules) and which skills carry the further detail. Sent in
+  // place of modifying the system prompt — the latter invalidates the
+  // inference prefix cache. No triggerTurn: the preamble only appends
+  // context; the next user message starts the turn. One preamble per branch
+  // per session (force bypasses the guard), so the first tool call awaiting
+  // /build-in-sandbox's in-flight launch does not duplicate it.
+  let preambleSentFor: string | null = null;
+  function sendSandboxPreamble(
+    ctx: ExtensionContext,
+    branch: string,
+    force = false,
+  ): void {
+    if (!force && preambleSentFor === branch) return;
+    preambleSentFor = branch;
+    pi.sendMessage(
+      {
+        customType: SANDBOX_PREAMBLE_TYPE,
+        content: renderPreamble(
+          packageDir,
+          branch,
+          skillNames(skillsTemplateDir),
+        ),
+        display: false,
+        details: { branch },
+      },
+    );
+  }
+
+  // Lazily launch the VM (as the wrapped tools do) and, when this call
+  // started the launch, send the sandbox preamble — so a session that
+  // reaches the sandbox without /build-in-sandbox still gets the context.
+  async function ensureVmWithPreamble(ctx: ExtensionContext): Promise<VM> {
+    const vmWasUp = sandbox.vm !== null;
+    const vm = await sandbox.ensureVm(ctx);
+    if (!vmWasUp && sandbox.workspace) {
+      sendSandboxPreamble(ctx, sandbox.branch ?? DEFAULT_WORK_BRANCH);
+    }
+    return vm;
+  }
 
   // Latest ExtensionContext seen by a hook or tool, used to refresh the
   // status bar and the subagent spinner from background state changes.
@@ -84,6 +168,28 @@ export default function (pi: ExtensionAPI) {
     spinnerTimer = setInterval(() => {
       if (lastCtx) renderSpinner(lastCtx);
     }, 80);
+  }
+
+  // VM startup progress widget: an animated spinner plus the latest boot
+  // log line, above the editor (next to the "Working" spinner). Shown
+  // while the main VM launches, cleared when it is ready. Keeping the
+  // boot logs out of the transcript means they never mix with the first
+  // turn's output.
+  let startupWidget: VmStartupWidget | undefined;
+  function showStartupWidget(branch: string): void {
+    if (!lastCtx || startupWidget) return;
+    lastCtx.ui.setWidget("gondolin-startup", (tui, theme) => {
+      startupWidget = new VmStartupWidget(tui, theme, branch);
+      return startupWidget;
+    });
+  }
+  function updateStartupLine(message: string): void {
+    if (startupWidget) startupWidget.latestLine = message;
+  }
+  function hideStartupWidget(): void {
+    if (!startupWidget) return;
+    startupWidget = undefined;
+    if (lastCtx) lastCtx.ui.setWidget("gondolin-startup", undefined);
   }
   function updateStatus(ctx: ExtensionContext | undefined): void {
     if (!ctx || shuttingDown) return;
@@ -152,8 +258,11 @@ export default function (pi: ExtensionAPI) {
 
   // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
   // and starts the first turn with the user's prompt (concurrently with
-  // the VM launch).
-  registerBuildCommand(pi, sandbox);
+  // the VM launch). onSandboxStart sends the sandbox preamble ahead of the
+  // first user prompt.
+  registerBuildCommand(pi, sandbox, {
+    onSandboxStart: sendSandboxPreamble,
+  });
 
   // Bring the sandbox back up when a session that ran in the sandbox is
   // started, resumed, reloaded, or forked. /build-in-sandbox persists the
@@ -163,6 +272,10 @@ export default function (pi: ExtensionAPI) {
     const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
     if (branch) {
       await sandbox.launch(branch, ctx);
+      // Refresh the sandbox context: the session resumes in the sandbox, and
+      // a fresh preamble is cheap and covers config changes since the
+      // original session (the stale one stays in the conversation history).
+      sendSandboxPreamble(ctx, branch, true);
     }
   });
 
@@ -171,6 +284,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     shuttingDown = true;
     stopSpinner();
+    hideStartupWidget();
     ctx.ui.setWidget("gondolin-subagents", undefined);
     ctx.ui.setStatus(
       "gondolin",
@@ -188,11 +302,31 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setStatus("gondolin", undefined);
   });
 
+  // Serve gondolin's skills as rendered templates: the raw .md files in the
+  // package's skills/ directory are templates, rendered with a context
+  // derived from the config (available github hosts, secrets, features) at
+  // load time into a host temp dir (see above).
+  pi.on("resources_discover", () => {
+    return { skillPaths: [skillsDir] };
+  });
+
   pi.registerTool({
     ...localRead,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      // Skill files listed in the prompt (gondolin's rendered skills and
+      // global skills) live on the host only; serve them with the plain
+      // read tool so the agent can check them. Everything else routes to
+      // the guest (repo-local skills map into the worktree). Writes/
+      // edits to the skills dirs are still rejected by the containment
+      // check — the skills are read-only from the agent's view.
+      if (
+        typeof params.path === "string" &&
+        isHostServedPath(localCwd, params.path, hostServedSkillRoots)
+      ) {
+        return localRead.execute(id, params, signal, onUpdate);
+      }
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createReadTool(localCwd, {
         operations: createGondolinReadOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -204,7 +338,7 @@ export default function (pi: ExtensionAPI) {
     ...localWrite,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createWriteTool(localCwd, {
         operations: createGondolinWriteOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -216,7 +350,7 @@ export default function (pi: ExtensionAPI) {
     ...localEdit,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createEditTool(localCwd, {
         operations: createGondolinEditOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -228,7 +362,7 @@ export default function (pi: ExtensionAPI) {
     ...localBash,
     async execute(id, params, signal, onUpdate, ctx) {
       touch(ctx);
-      const activeVm = await sandbox.ensureVm(ctx);
+      const activeVm = await ensureVmWithPreamble(ctx);
       const tool = createBashTool(localCwd, {
         operations: createGondolinBashOps(activeVm, localCwd, sandbox.workspace!),
       });
@@ -431,54 +565,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("user_bash", (_event, _ctx) => {
     if (!sandbox.vm || !sandbox.workspace) return;
     return { operations: createGondolinBashOps(sandbox.vm, localCwd, sandbox.workspace) };
-  });
-
-  // Replace the CWD section in the system prompt so the model sees
-  // /workspace and knows that only the git repository is persistent. The
-  // section is kept as short, scannable bullets; detailed how-to for
-  // optional features (subagents, GitHub) lives in on-demand skills so the
-  // always-present prompt stays lean.
-  pi.on("before_agent_start", async (event, ctx) => {
-    touch(ctx);
-    // Do NOT await the VM here: the first turn must be able to start (and
-    // stream its response) while the VM is still booting. The CWD section
-    // only needs the branch, which is known as soon as the launch starts
-    // (see vm.ts). Tool calls gate on the VM via ensureVm() instead.
-    // Scratch mounts are enabled by default; check the config so the prompt
-    // only advertises them when they are actually mounted (see vm.ts).
-    const config = loadGondolinConfig(
-      localCwd,
-      path.join(os.homedir(), ".pi", "agent"),
-    );
-    const scratchEnabled = config.scratch !== false;
-    const developMode = config.developMode === true;
-    const branch = sandbox.branch ?? DEFAULT_WORK_BRANCH;
-    const githubLine = githubPromptLine(
-      resolveMagicDirHosts(config),
-      resolveGhCliHosts(config).map((h) => h.host),
-    );
-
-    const lines: string[] = [
-      `You are working in a gondolin sandbox.`,
-      `- cwd: ${sandbox.workspace} \u2014 a git worktree on your branch (${branch}), owned by you.`,
-      `- You share the source git repository with the user, who reviews & merges your changes on their host. Do not commit to any other branch and do not merge your branch \u2014 ask the user to review & merge instead.`,
-      `- The git repository is the ONLY persistent storage; the rest of the filesystem is ephemeral. Commit all relevant work to your branch (${branch}) or it will be lost.`,
-    ];
-    if (scratchEnabled) {
-      lines.push(
-        `- Scratch dirs persist across VM restarts (host temp filesystem \u2014 temporary, not permanent): ` +
-          `${GUEST_SCRATCH} is shared with every session of this repo (only universally useful artifacts, e.g. shared caches or downloaded files); ` +
-          `${GUEST_SCRATCH_LOCAL} is private to your branch (anything else: build outputs, temporary data).`,
-      );
-    }
-    if (githubLine) lines.push(`- ${githubLine}`);
-    if (developMode) {
-      lines.push(
-        `This sandbox is under development. When you are done, report any issues you had with the sandbox itself ` +
-          `(broken tools, missing packages, unexpected behavior) so they can be fixed.`,
-      );
-    }
-    event.systemPromptOptions.sections.cwd = lines.join("\n");
   });
 }
 

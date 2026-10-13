@@ -41,6 +41,11 @@ import {
   PREPARE_SCRIPT,
 } from "./config";
 
+// No-op prepare-commit-msg hook written when the pi-agent co-author
+// attribution is disabled (config `coAuthor: false`): commits are left
+// exactly as authored, with no trailer appended.
+const NOOP_PREPARE_COMMIT_MSG_HOOK = `#!/bin/sh\n# pi-agent co-author attribution disabled (config coAuthor: false)\nexit 0\n`;
+
 export interface DetachedVmOptions {
   localCwd: string;
   localGitDir: string;
@@ -183,9 +188,14 @@ export async function launchDetachedVm(
       fs.readFileSync(path.join(moduleRoot, "scripts", "prepare.sh")),
     );
     await created.fs.mkdir(GIT_HOOKS_DIR, { recursive: true });
+    // The pi-agent co-author trailer is on by default; only an explicit
+    // `coAuthor: false` in the config swaps in a no-op hook.
+    const coAuthorEnabled = config.coAuthor !== false;
     await created.fs.writeFile(
       path.join(GIT_HOOKS_DIR, "prepare-commit-msg"),
-      fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg")),
+      coAuthorEnabled
+        ? fs.readFileSync(path.join(moduleRoot, "scripts", "prepare-commit-msg"))
+        : NOOP_PREPARE_COMMIT_MSG_HOOK,
     );
     // `branch` and `branchStart` are sanitized branch names ([a-z0-9-] only)
     // or commit hashes, so they are safe to interpolate into the shell
@@ -319,9 +329,19 @@ export interface GondolinSandbox {
   close: () => Promise<void>;
 }
 
+export interface SandboxCallbacks {
+  /** Called when a launch starts (the VM is not up yet). */
+  onLaunchStart?: (branch: string) => void;
+  /** Called with each launch progress line (image build, boot). */
+  onNotice?: (branch: string, message: string) => void;
+  /** Called when a launch settles, success or failure. */
+  onLaunchSettled?: (branch: string) => void;
+}
+
 export function createSandbox(
   localCwd: string,
   localGitDir: string,
+  callbacks: SandboxCallbacks = {},
 ): GondolinSandbox {
   let vm: VM | null = null;
   let branch: string | null = null;
@@ -332,25 +352,32 @@ export function createSandbox(
     ctx?: ExtensionContext,
   ): Promise<VM> {
     try {
+      callbacks.onLaunchStart?.(requested);
       setStatus(ctx, "starting…");
       const created = await launchDetachedVm(requested, {
         localCwd,
         localGitDir,
-        onNotice: (message) => ctx?.ui.notify(message, "info"),
+        // Progress lines go to the caller (index.ts renders them in the
+        // startup widget), not to the transcript — boot logs must not mix
+        // with the first turn's output.
+        onNotice: (message) => callbacks.onNotice?.(requested, message),
       });
       vm = created;
       branch = requested;
       setStatus(ctx, requested);
+      // The single transcript line confirming the VM is ready.
       ctx?.ui.notify(`
         Gondolin VM ready. Branch ${requested} of ${localCwd} created at ${guestWorkspace(requested)}`,
         "info",
       );
+      callbacks.onLaunchSettled?.(requested);
       return created;
     } catch (err) {
       branch = null;
       // Drop the "starting" status; the error itself is surfaced by
       // pi to the user.
       ctx?.ui.setStatus("gondolin", undefined);
+      callbacks.onLaunchSettled?.(requested);
       throw err;
     }
   }
