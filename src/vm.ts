@@ -14,6 +14,7 @@ import {
   resolvePostBuild,
   resolveMagicDirHosts,
   resolveGhCliHosts,
+  resolveGitIdentity,
   resolveSecrets,
 } from "./config-loader";
 import { resolveImageAssets } from "./image";
@@ -31,9 +32,7 @@ import {
   GUEST_MAGIC_DIR,
   GUEST_SCRATCH,
   GUEST_SCRATCH_LOCAL,
-  GIT_EMAIL,
   GIT_HOOKS_DIR,
-  GIT_NAME,
   hostMagicCloneRoot,
   hostScratchBranch,
   hostScratchShared,
@@ -45,6 +44,13 @@ import {
 // `coAuthor: true`): commits are left exactly as authored, with no
 // trailer appended.
 const NOOP_PREPARE_COMMIT_MSG_HOOK = `#!/bin/sh\n# pi-agent co-author attribution not enabled (opt in with config coAuthor: true)\nexit 0\n`;
+
+// Single-quote a value for safe interpolation into a /bin/sh -lc command
+// line (the git identity is user-supplied via the host git config or the
+// gondolin.json override, so it must never be interpolated raw).
+function shq(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 
 export interface DetachedVmOptions {
   localCwd: string;
@@ -105,6 +111,12 @@ export async function launchDetachedVm(
   // with egress restricted to exactly that host. The guest only ever sees
   // each secret's placeholder (in hosts.yml and its env var); the http
   // hooks substitute the real token at egress.
+  // Git identity for commits made in the guest: the config's `git` override
+  // takes precedence, then the host's effective git config, then the
+  // fallback defaults (see config-loader.ts). Resolved per launch so a host
+  // git config change is picked up without restarting pi.
+  const gitIdentity = resolveGitIdentity(config, localCwd);
+
   const ghCliHosts = resolveGhCliHosts(config);
   // Surface gh CLI entries that were configured but not resolvable (e.g. the
   // env var named by `ghCliToken` is not set in the process that started pi,
@@ -204,8 +216,8 @@ export async function launchDetachedVm(
       ? `export WORK_BRANCH_START='${branchStart}' &&\\`
       : "";
     const result = await created.exec(`
-        export GIT_EMAIL='${GIT_EMAIL}' &&\\
-        export GIT_NAME='${GIT_NAME}' &&\\
+        export GIT_EMAIL=${shq(gitIdentity.email)} &&\\
+        export GIT_NAME=${shq(gitIdentity.name)} &&\\
         export WORK_BRANCH_NAME='${branch}' &&\\
         ${startExport}
         export GUEST_GIT_DIR='${GUEST_GIT_DIR}' &&\\

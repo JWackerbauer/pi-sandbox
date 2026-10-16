@@ -34,7 +34,9 @@ pi session (host)
 - On launch (`launchDetachedVm` in `src/vm.ts`), the extension writes
   `src/scripts/prepare.sh` and a `prepare-commit-msg` git hook into the guest, then
   runs `prepare.sh`, which:
-  - configures the guest git identity (`GIT_NAME`/`GIT_EMAIL` from `src/config.ts`),
+  - configures the guest git identity (resolved per launch: config `git`
+    override → host's effective `git config` → fallback defaults, see
+    `resolveGitIdentity` in `src/config-loader.ts`),
   - marks `.git` and the workspace as safe directories,
   - points `core.hooksPath` at the installed hooks,
   - creates the work branch (if it doesn't exist) as a worktree at `/workspace`
@@ -303,7 +305,7 @@ stock image:
 | `src/commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
 | `src/vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal, post-startup commands |
 | `src/subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
-| `src/config.ts` | Guest layout, git identity, limits, session entry type, config contract |
+| `src/config.ts` | Guest layout, git identity fallback, limits, session entry type, config contract |
 | `src/config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret & GitHub host resolution |
 | `src/github.ts` | host-side `/git` magic-dir VFS provider (host `gh`), guest `gh` install/auth via secret placeholders, and the GitHub prompt line |
 | `src/image.ts` | Stock vs. custom image assets: build, cache, log capture, container detection |

@@ -34,6 +34,10 @@
       "default": true,
       "description": "Enable the per-repo (`/scratch`) and per-branch (`/scratch-local`) scratch mounts (host tempdir → guest). Set false to disable both."
     },
+    "git": {
+      "$ref": "#/$defs/gitIdentity",
+      "description": "Git identity for commits made inside the guest. Each field is optional and overrides the corresponding value from the host's effective git config (repo-local, then global). Merged per field."
+    },
     "coAuthor": {
       "type": "boolean",
       "default": false,
@@ -55,6 +59,22 @@
     }
   },
   "$defs": {
+    "gitIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Committer name. Defaults to the host's effective git config `user.name`."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Committer email. Defaults to the host's effective git config `user.email`."
+        }
+      }
+    },
     "vmSizing": {
       "type": "object",
       "additionalProperties": false,

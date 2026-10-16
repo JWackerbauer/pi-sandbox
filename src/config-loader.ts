@@ -1,6 +1,7 @@
 // Loads the GondolinConfig from JSON config files and derives per-repo
 // helpers. See config.ts for the shape of the config.
 
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -9,10 +10,12 @@ import type {
   GondolinConfig,
   GitHubOrgConfig,
   GhCliHost,
+  GitIdentity,
   PostBuildConfig,
   SecretConfig,
   VmSizing,
 } from "./config";
+import { FALLBACK_GIT_IDENTITY } from "./config";
 
 const CONFIG_FILE_NAME = "gondolin.json";
 
@@ -27,6 +30,7 @@ function readConfigFile(file: string): GondolinConfig {
     config.env = normalizeEnv(config.env);
     config.postStartup = normalizePostStartup(config.postStartup);
     config.github = normalizeGithub(config.github);
+    config.git = normalizeGit(config.git);
     return config;
   } catch {
     return {};
@@ -71,6 +75,25 @@ function normalizeGithub(
     });
   }
   return orgs.length > 0 ? orgs : undefined;
+}
+
+// `git` should be an object with optional string `name`/`email` fields, but
+// a hand-written JSON file can hold anything. Normalize it so an ill-shaped
+// value never crashes the launch: non-string/empty fields are dropped, and
+// any value that is not a plain object is treated as unset.
+function normalizeGit(
+  value: unknown,
+): { name?: string; email?: string } | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const e = value as Record<string, unknown>;
+  const git: { name?: string; email?: string } = {};
+  if (typeof e.name === "string" && e.name.trim().length > 0) git.name = e.name;
+  if (typeof e.email === "string" && e.email.trim().length > 0) {
+    git.email = e.email;
+  }
+  return git.name !== undefined || git.email !== undefined ? git : undefined;
 }
 
 // `postStartup` should be a list of shell commands, but a hand-written JSON
@@ -124,6 +147,18 @@ function mergeGithub(
 // can override just `vm.memory` while inheriting `vm.cpus` from the global
 // config. `postStartup` and `postBuild` are overridden wholesale (a project
 // config that sets them replaces the global value; it does not concatenate).
+// `git` identity fields merge per field, so a project config can override
+// just `git.name` while inheriting `git.email` from the global config.
+function mergeGit(
+  global: { name?: string; email?: string } | undefined,
+  project: { name?: string; email?: string } | undefined,
+): { name?: string; email?: string } | undefined {
+  const merged = { ...global, ...project };
+  return merged.name !== undefined || merged.email !== undefined
+    ? merged
+    : undefined;
+}
+
 function mergeConfigs(
   global: GondolinConfig,
   project: GondolinConfig,
@@ -134,6 +169,7 @@ function mergeConfigs(
     secrets: { ...global.secrets, ...project.secrets },
     env: mergeEnv(global.env, project.env),
     github: mergeGithub(global.github, project.github),
+    git: mergeGit(global.git, project.git),
   };
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;
@@ -291,4 +327,40 @@ export function resolveSecrets(
     resolved[name] = def;
   }
   return resolved;
+}
+
+// Read one value from the host's effective git config as seen from
+// `localCwd` (repo-local, then global, then system). Returns undefined when
+// the value is unset or git cannot be consulted — the caller falls back.
+function hostGitConfigValue(localCwd: string, key: string): string | undefined {
+  try {
+    const value = execFileSync(
+      "git",
+      ["-C", localCwd, "config", key],
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+    ).trim();
+    return value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the git identity for commits made inside the guest. Each field
+ * comes from the config's `git` override when set, otherwise from the
+ * host's effective git config (`user.name` / `user.email` as seen from
+ * `localCwd`), falling back to FALLBACK_GIT_IDENTITY when the host has no
+ * value for that field.
+ */
+export function resolveGitIdentity(
+  config: GondolinConfig,
+  localCwd: string,
+): GitIdentity {
+  return {
+    name: config.git?.name ?? hostGitConfigValue(localCwd, "user.name") ??
+      FALLBACK_GIT_IDENTITY.name,
+    email: config.git?.email ??
+      hostGitConfigValue(localCwd, "user.email") ??
+      FALLBACK_GIT_IDENTITY.email,
+  };
 }

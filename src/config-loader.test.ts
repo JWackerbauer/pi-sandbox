@@ -2,6 +2,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import {
   resolvePostBuild,
   resolveMagicDirHosts,
   resolveGhCliHosts,
+  resolveGitIdentity,
   resolveSecrets,
 } from "./config-loader";
 
@@ -418,4 +420,117 @@ test("resolveMagicDirHosts/resolveGhCliHosts are empty when github is not config
   const cfg = loadGondolinConfig(localCwd, agentDir);
   assert.deepEqual(resolveMagicDirHosts(cfg), []);
   assert.deepEqual(resolveGhCliHosts(cfg), []);
+});
+
+// ─── git identity ───────────────────────────────────────────────────────
+//
+// resolveGitIdentity shells out to `git config`, so these tests isolate the
+// host's real git config by pointing GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM
+// at a temp file for the duration of each test.
+function withHostGitConfig(
+  gitconfig: string | null,
+  fn: (localCwd: string) => void,
+): void {
+  const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+  const prevSystem = process.env.GIT_CONFIG_SYSTEM;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-gid-"));
+  const localCwd = path.join(root, "repo");
+  fs.mkdirSync(localCwd, { recursive: true });
+  const configFile = path.join(root, "gitconfig");
+  fs.writeFileSync(configFile, gitconfig ?? "");
+  process.env.GIT_CONFIG_GLOBAL = configFile;
+  process.env.GIT_CONFIG_SYSTEM = configFile; // same empty file: no system values
+  try {
+    fn(localCwd);
+  } finally {
+    if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+    if (prevSystem === undefined) delete process.env.GIT_CONFIG_SYSTEM;
+    else process.env.GIT_CONFIG_SYSTEM = prevSystem;
+  }
+}
+
+test("resolveGitIdentity uses the host's git config when no override is set", () => {
+  withHostGitConfig(
+    "[user]\n\tname = Host Name\n\temail = host@example.com\n",
+    (localCwd) => {
+      assert.deepEqual(resolveGitIdentity({}, localCwd), {
+        name: "Host Name",
+        email: "host@example.com",
+      });
+    },
+  );
+});
+
+test("resolveGitIdentity prefers the repo-local config over the global one", () => {
+  withHostGitConfig(
+    "[user]\n\tname = Host Name\n\temail = host@example.com\n",
+    (localCwd) => {
+      // Make localCwd a real repo with its own user.name.
+      execFileSync("git", ["init", "--quiet", localCwd], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      execFileSync(
+        "git",
+        ["-C", localCwd, "config", "user.email", "repo@example.com"],
+        { stdio: ["pipe", "pipe", "pipe"] },
+      );
+      // Repo-local email wins; name is absent locally, so the global one is
+      // used for it.
+      assert.deepEqual(resolveGitIdentity({}, localCwd), {
+        name: "Host Name",
+        email: "repo@example.com",
+      });
+    },
+  );
+});
+
+test("resolveGitIdentity falls back to the defaults when the host has no value", () => {
+  withHostGitConfig(null, (localCwd) => {
+    assert.deepEqual(resolveGitIdentity({}, localCwd), {
+      name: "Gondolin Sandbox",
+      email: "gondolin@localhost",
+    });
+  });
+});
+
+test("resolveGitIdentity applies the config override per field", () => {
+  withHostGitConfig(
+    "[user]\n\tname = Host Name\n\temail = host@example.com\n",
+    (localCwd) => {
+      // Only the name is overridden; the email comes from the host config.
+      assert.deepEqual(
+        resolveGitIdentity({ git: { name: "Override Name" } }, localCwd),
+        { name: "Override Name", email: "host@example.com" },
+      );
+      // Both overridden.
+      assert.deepEqual(
+        resolveGitIdentity(
+          { git: { name: "Override Name", email: "override@example.com" } },
+          localCwd,
+        ),
+        { name: "Override Name", email: "override@example.com" },
+      );
+    },
+  );
+});
+
+test("the git config field is normalized and merged per field", () => {
+  // Ill-shaped values are dropped: non-objects, non-string fields, empty strings.
+  let env = makeEnv({ git: "nope" }, null);
+  assert.equal(loadGondolinConfig(env.localCwd, env.agentDir).git, undefined);
+  env = makeEnv({ git: { name: 42, email: "  " } }, null);
+  assert.equal(
+    loadGondolinConfig(env.localCwd, env.agentDir).git,
+    undefined,
+  );
+  // Per-field merge: a project `git.name` inherits the global `git.email`.
+  env = makeEnv(
+    { git: { name: "Global Name", email: "global@example.com" } },
+    { git: { name: "Project Name" } },
+  );
+  assert.deepEqual(loadGondolinConfig(env.localCwd, env.agentDir).git, {
+    name: "Project Name",
+    email: "global@example.com",
+  });
 });

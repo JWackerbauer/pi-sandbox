@@ -56,11 +56,19 @@ export const SUBAGENT_RECENT_TOOL_WINDOW = 5;
 export const SUMMARY_MAX_TOKENS = 32;
 export const BRANCH_NAME_MAX_LENGTH = 40;
 
-// Git identity for commits made inside the guest (attributed to the operator,
-// with an optional pi-agent co-author trailer added by the
-// prepare-commit-msg hook, enabled by config `coAuthor: true`).
-export const GIT_EMAIL = "jan.wackerbauer@gmail.com";
-export const GIT_NAME = "Jan Wackerbauer";
+// Git identity used for commits made inside the guest (with an optional
+// pi-agent co-author trailer added by the prepare-commit-msg hook, enabled
+// by config `coAuthor: true`). Resolved by config-loader.ts:
+// config `git` override → the host's effective `git config` → the
+// fallback defaults below.
+export interface GitIdentity {
+  name: string;
+  email: string;
+}
+export const FALLBACK_GIT_IDENTITY: GitIdentity = {
+  name: "Gondolin Sandbox",
+  email: "gondolin@localhost",
+};
 
 // ─── Configurable VM options ─────────────────────────────────────────────
 //
@@ -197,6 +205,14 @@ export interface GondolinConfig {
    * guest). Default true. Set false to disable both.
    */
   scratch?: boolean;
+  /**
+   * Git identity for commits made inside the guest. Each field is optional
+   * and overrides the corresponding value from the host's effective git
+   * config (repo-local, then global); fields left unset fall back to the
+   * host's value. Merged per field (a project config can override just
+   * `git.name` while inheriting `git.email`).
+   */
+  git?: { name?: string; email?: string };
   /**
    * Add a `Co-Authored-By: pi-agent` trailer to commits made inside the
    * guest (via the prepare-commit-msg git hook). Default false. Set true

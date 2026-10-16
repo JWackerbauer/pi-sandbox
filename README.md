@@ -194,6 +194,7 @@ for editor autocompletion and validation.
     { "host": "myorg.ghe.com", "ghCliToken": "MYORG_GHE_TOKEN" }
   ],
   "scratch": true,
+  "git": { "name": "Jan Wackerbauer", "email": "jan.wackerbauer@gmail.com" },
   "developMode": false,
   "coAuthor": true,
   "postStartup": ["git submodule update --init"],
@@ -253,6 +254,14 @@ for editor autocompletion and validation.
   - `/scratch` — per-repo, shared by every sandbox session of that repo.
   - `/scratch-local` — per-repo *and* per-branch, private to the current work branch.
   Set `"scratch": false` to disable both mounts.
+- **`git` — commit identity.** The name/email used for commits made inside the
+  guest. Each field is optional: when set it overrides the corresponding value from
+  the host's effective git config (the repo's local config, then `~/.gitconfig`);
+  when unset the host's value is used, and if the host has no value for a field a
+  neutral fallback (`Gondolin Sandbox` / `gondolin@localhost`) is used. Merged per
+  field, so a project config can override just `git.name` while inheriting
+  `git.email`. Resolved at every VM launch, so a change to the host git config is
+  picked up on the next launch without restarting pi.
 - **`developMode` — development feedback.** When `true`, the agent is told the sandbox
   is under development and asked to report any issues it had with the sandbox once it
   is done working. Default `false`.
