@@ -60,14 +60,14 @@ export const BRANCH_NAME_MAX_LENGTH = 40;
 // pi-agent co-author trailer added by the prepare-commit-msg hook, enabled
 // by config `coAuthor: true`). Resolved by config-loader.ts:
 // config `git` override → the host's effective `git config` → the
-// fallback defaults below.
+// fallback defaults below (matching the co-author identity).
 export interface GitIdentity {
   name: string;
   email: string;
 }
 export const FALLBACK_GIT_IDENTITY: GitIdentity = {
-  name: "Gondolin Sandbox",
-  email: "gondolin@localhost",
+  name: "pi-agent",
+  email: "pi-agent@localhost",
 };
 
 // ─── Configurable VM options ─────────────────────────────────────────────

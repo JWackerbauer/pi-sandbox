@@ -488,8 +488,8 @@ test("resolveGitIdentity prefers the repo-local config over the global one", () 
 test("resolveGitIdentity falls back to the defaults when the host has no value", () => {
   withHostGitConfig(null, (localCwd) => {
     assert.deepEqual(resolveGitIdentity({}, localCwd), {
-      name: "Gondolin Sandbox",
-      email: "gondolin@localhost",
+      name: "pi-agent",
+      email: "pi-agent@localhost",
     });
   });
 });

@@ -258,7 +258,8 @@ for editor autocompletion and validation.
   guest. Each field is optional: when set it overrides the corresponding value from
   the host's effective git config (the repo's local config, then `~/.gitconfig`);
   when unset the host's value is used, and if the host has no value for a field a
-  neutral fallback (`Gondolin Sandbox` / `gondolin@localhost`) is used. Merged per
+  neutral fallback (`pi-agent` / `pi-agent@localhost`, matching the co-author
+  identity) is used. Merged per
   field, so a project config can override just `git.name` while inheriting
   `git.email`. Resolved at every VM launch, so a change to the host git config is
   picked up on the next launch without restarting pi.
