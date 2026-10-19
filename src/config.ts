@@ -52,9 +52,13 @@ export const SUBAGENT_LOOP_WINDOW = 3;
 // How many recent tool-call fingerprints to retain for loop detection.
 export const SUBAGENT_RECENT_TOOL_WINDOW = 5;
 
-// Limits for the branch-name summarizer model call.
+// Limits for the branch-name summarizer model call. Naming is
+// best-effort: when the model call fails, times out, or returns no usable
+// text, a deterministic name is derived from the prompt instead.
 export const SUMMARY_MAX_TOKENS = 32;
 export const BRANCH_NAME_MAX_LENGTH = 40;
+/** Give up on the model after this long and name the branch from the prompt. */
+export const BRANCH_NAME_TIMEOUT_MS = 60_000;
 
 // Git identity used for commits made inside the guest (with an optional
 // pi-agent co-author trailer added by the prepare-commit-msg hook, enabled

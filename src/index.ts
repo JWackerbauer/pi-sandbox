@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -599,6 +600,19 @@ export default function (pi: ExtensionAPI) {
       enterSandbox(ctx);
       sendSandboxPreamble(ctx, branch);
     },
+    // Collision check against the shared .git (the host's .git), so the
+    // session's branch is always fresh: a name checked out by another
+    // session would fail the worktree creation, and a stale branch (e.g.
+    // a leftover subagent branch) would be silently reused.
+    isBranchTaken: (name) =>
+      new Promise((resolve) => {
+        execFile(
+          "git",
+          ["-C", localCwd, "show-ref", "--verify", "--quiet", `refs/heads/${name}`],
+          { timeout: 10_000 },
+          (err) => resolve(err === null),
+        );
+      }),
   });
 
   // Bring the sandbox back up when a session that ran in the sandbox is

@@ -5,11 +5,11 @@ import type {
   Model,
   UserMessage,
 } from "@earendil-works/pi-ai";
-import { BRANCH_NAME_MAX_LENGTH, SUMMARY_MAX_TOKENS } from "./config";
+import { BRANCH_NAME_MAX_LENGTH, BRANCH_NAME_TIMEOUT_MS, SUMMARY_MAX_TOKENS } from "./config";
 
 // Sanitize arbitrary model output into a valid git branch name:
 // lowercase, kebab-case, at most BRANCH_NAME_MAX_LENGTH characters.
-// The result always matches /^[a-z0-9][a-z0-9-]*$/.
+// The result always matches /^[a-z0-9][a-z0-9-]*$/ and is never empty.
 export function toBranchName(raw: string): string {
   const name = raw
     .toLowerCase()
@@ -20,15 +20,31 @@ export function toBranchName(raw: string): string {
   return name.length > 0 ? name : "build";
 }
 
+// Deterministic name derived from the prompt itself: the first words
+// joined kebab-case, capped at BRANCH_NAME_MAX_LENGTH. Used whenever the
+// model gives no usable answer, so the branch still reflects the request
+// (a bare `toBranchName(prompt)` would truncate a long prompt mid-word).
+export function nameFromPrompt(prompt: string): string {
+  const words = prompt.trim().split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return "build";
+  let name = words[0]!;
+  for (const word of words.slice(1)) {
+    const candidate = `${name}-${word}`;
+    if (candidate.length > BRANCH_NAME_MAX_LENGTH) break;
+    name = candidate;
+  }
+  return toBranchName(name);
+}
+
 // Ask the given model for a short summary of a build request and
-// sanitize the answer into a branch name. When the model returns no
-// usable text (e.g. the token budget was consumed by thinking), fall
-// back to a deterministic name derived from the first words of the
-// prompt, so the branch always reflects the request.
+// sanitize the answer into a branch name. Never throws: a failed, hung,
+// or empty model call degrades to the deterministic prompt-derived name,
+// so branch naming can never block or fail a launch.
 export async function requestBranchName(
   model: Model<any>,
   registry: ExtensionContext["modelRegistry"],
   prompt: string,
+  timeoutMs: number = BRANCH_NAME_TIMEOUT_MS,
 ): Promise<string> {
   const userMessage: UserMessage = {
     role: "user",
@@ -42,19 +58,52 @@ export async function requestBranchName(
       "only, no explanation, no quotes.",
     messages: [userMessage],
   };
-  // No `reasoning` option: streamSimple defaults to thinking "off", so
-  // the whole maxTokens budget is available for the answer.
-  const stream = registry.streamSimple(model, context, {
-    maxTokens: SUMMARY_MAX_TOKENS,
+  let result: AssistantMessage | undefined;
+  try {
+    // No `reasoning` option: streamSimple defaults to thinking "off", so
+    // the whole maxTokens budget is available for the answer.
+    const stream = registry.streamSimple(model, context, {
+      maxTokens: SUMMARY_MAX_TOKENS,
+    });
+    result = await withTimeout(stream.result(), timeoutMs);
+  } catch {
+    // Naming is best-effort: a throwing call, a timeout, or a hung
+    // provider all fall through to the prompt-derived name below.
+  }
+  // Only a completed response counts. A thinking model that spent its
+  // token budget on reasoning, a provider error (stopReason "error"),
+  // or an aborted call yields no usable text — use the prompt instead of
+  // the static "build" fallback that toBranchName would return.
+  const text =
+    result && (result.stopReason === "stop" || result.stopReason === "length")
+      ? result.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join(" ")
+          .trim()
+      : "";
+  const fromModel = text.length > 0 ? toBranchName(text) : "";
+  return fromModel.length > 0 ? fromModel : nameFromPrompt(prompt);
+}
+
+// Reject with a timeout error after `ms`, whichever settles first.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${ms}ms`)),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
   });
-  const result: AssistantMessage = await stream.result();
-  const text = result.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join(" ")
-    .trim();
-  const fromModel = toBranchName(text);
-  return fromModel.length > 0 ? fromModel : toBranchName(prompt);
 }
 
 // Deterministic fallback for a taken branch name: suffix the base with -2,

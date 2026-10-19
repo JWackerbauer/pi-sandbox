@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { requestBranchName } from "../branch-name";
+import { requestDistinctBranchName } from "../branch-name";
 import { SANDBOX_ENTRY_TYPE, SESSION_NAME_PREFIX } from "../config";
 import type { GondolinSandbox } from "../vm";
 
@@ -11,6 +11,15 @@ export interface BuildCommandOptions {
    * parameters have changed, in place of modifying the system prompt.
    */
   onSandboxStart?: (ctx: ExtensionContext, branch: string) => void;
+  /**
+   * Reports whether a branch name already exists in the shared .git. The
+   * named branch is checked for collisions (the model is asked again, with
+   * a deterministic unique suffix as the final fallback) so the session
+   * never lands on a branch checked out by another session, nor silently
+   * reuses a stale branch (e.g. a leftover subagent branch, which are kept
+   * after the subagent settles).
+   */
+  isBranchTaken: (name: string) => Promise<boolean>;
 }
 
 // /build-in-sandbox [prompt]
@@ -62,11 +71,27 @@ export function registerBuildCommand(
         "gondolin",
         ctx.ui.theme.fg("accent", "gondolin: naming branch…"),
       );
-      const branch = await requestBranchName(
-        model,
-        ctx.modelRegistry,
-        prompt,
-      );
+      // Naming itself never throws (a failed model call degrades to a
+      // deterministic prompt-derived name); only the shared-`git` lookup
+      // can fail, and then the session must not be entered half-way.
+      let branch: string;
+      try {
+        branch = await requestDistinctBranchName(
+          model,
+          ctx.modelRegistry,
+          prompt,
+          opts.isBranchTaken,
+        );
+      } catch (err) {
+        ctx.ui.setStatus("gondolin", undefined);
+        ctx.ui.notify(
+          `gondolin: naming the branch failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          "error",
+        );
+        return;
+      }
 
       // Rename and persist the branch so /resume (and /reload) can relaunch
       // the sandbox for it. Custom entries are not sent to the LLM.
