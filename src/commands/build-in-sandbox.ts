@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { requestDistinctBranchName } from "../branch-name";
+import { describeBranchNameFallback, requestDistinctBranchName } from "../branch-name";
 import { SANDBOX_ENTRY_TYPE, SESSION_NAME_PREFIX } from "../config";
 import type { GondolinSandbox } from "../vm";
 
@@ -76,12 +76,21 @@ export function registerBuildCommand(
       // can fail, and then the session must not be entered half-way.
       let branch: string;
       try {
-        branch = await requestDistinctBranchName(
+        const named = await requestDistinctBranchName(
           model,
           ctx.modelRegistry,
           prompt,
           opts.isBranchTaken,
         );
+        branch = named.name;
+        // A degraded naming (prompt-derived name, or a unique suffix after
+        // collisions) is reported to the user, never silent.
+        if (named.reason !== undefined) {
+          ctx.ui.notify(
+            `gondolin: ${describeBranchNameFallback(named)}`,
+            "error",
+          );
+        }
       } catch (err) {
         ctx.ui.setStatus("gondolin", undefined);
         ctx.ui.notify(

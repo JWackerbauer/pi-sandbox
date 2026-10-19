@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import {
+  describeBranchNameFallback,
   nameFromPrompt,
   requestBranchName,
   requestDistinctBranchName,
@@ -49,6 +50,26 @@ test("nameFromPrompt falls back to 'build' for empty input", () => {
   assert.equal(nameFromPrompt("   "), "build");
 });
 
+test("describeBranchNameFallback describes a prompt-derived name", () => {
+  const message = describeBranchNameFallback({
+    name: "fix-the-login-bug",
+    source: "prompt",
+    reason: "the model returned no text (the token budget may have been consumed by thinking)",
+  });
+  assert.match(message, /model-based branch naming failed: the model returned no text/);
+  assert.match(message, /using "fix-the-login-bug" derived from the prompt instead/);
+});
+
+test("describeBranchNameFallback describes a unique-suffix name", () => {
+  const message = describeBranchNameFallback({
+    name: "taken-branch-3",
+    source: "model",
+    reason: '"taken-branch" was already in use',
+  });
+  assert.match(message, /"taken-branch" was already in use/);
+  assert.match(message, /using "taken-branch-3" \(a unique suffix\)/);
+});
+
 // ─── requestBranchName (fake registry) ──────────────────────────────────
 
 type ModelRegistry = ExtensionContext["modelRegistry"];
@@ -93,46 +114,46 @@ function fakeRegistry(
 
 test("requestBranchName sanitizes the model's answer", async () => {
   const registry = fakeRegistry(assistantMessage("Fix The Bug!"));
-  assert.equal(
-    await requestBranchName(fakeModel, registry, "do something"),
-    "fix-the-bug",
-  );
+  const result = await requestBranchName(fakeModel, registry, "do something");
+  assert.equal(result.name, "fix-the-bug");
+  assert.equal(result.source, "model");
+  assert.equal(result.reason, undefined);
 });
 
 test("requestBranchName falls back to the prompt when the model returns no text", async () => {
   // A thinking model that spent its token budget on reasoning returns an
   // empty answer — the name must come from the prompt, not be "build".
   const registry = fakeRegistry(assistantMessage(""));
-  assert.equal(
-    await requestBranchName(fakeModel, registry, "Fix the login bug"),
-    "fix-the-login-bug",
-  );
+  const result = await requestBranchName(fakeModel, registry, "Fix the login bug");
+  assert.equal(result.name, "fix-the-login-bug");
+  assert.equal(result.source, "prompt");
+  assert.match(result.reason ?? "", /no text/);
 });
 
-test("requestBranchName falls back to the prompt on a provider error", async () => {
+test("requestBranchName reports a provider error in the fallback reason", async () => {
   const registry = fakeRegistry(assistantMessage("", "error"));
-  assert.equal(
-    await requestBranchName(fakeModel, registry, "Fix the login bug"),
-    "fix-the-login-bug",
-  );
+  const result = await requestBranchName(fakeModel, registry, "Fix the login bug");
+  assert.equal(result.name, "fix-the-login-bug");
+  assert.equal(result.source, "prompt");
+  assert.match(result.reason ?? "", /provider error/);
 });
 
-test("requestBranchName falls back to the prompt when the call rejects", async () => {
+test("requestBranchName reports a rejected call in the fallback reason", async () => {
   const registry = fakeRegistry(assistantMessage("ignored"), { throw: true });
-  assert.equal(
-    await requestBranchName(fakeModel, registry, "Fix the login bug"),
-    "fix-the-login-bug",
-  );
+  const result = await requestBranchName(fakeModel, registry, "Fix the login bug");
+  assert.equal(result.name, "fix-the-login-bug");
+  assert.equal(result.source, "prompt");
+  assert.match(result.reason ?? "", /model call failed/);
 });
 
-test("requestBranchName falls back to the prompt on timeout", async () => {
+test("requestBranchName reports a timeout in the fallback reason", async () => {
   const registry = fakeRegistry(assistantMessage("too-slow-name"), {
     delayMs: 50,
   });
-  assert.equal(
-    await requestBranchName(fakeModel, registry, "Fix the login bug", 10),
-    "fix-the-login-bug",
-  );
+  const result = await requestBranchName(fakeModel, registry, "Fix the login bug", 10);
+  assert.equal(result.name, "fix-the-login-bug");
+  assert.equal(result.source, "prompt");
+  assert.match(result.reason ?? "", /timed out/);
 });
 
 // ─── requestDistinctBranchName ───────────────────────────────────────────
@@ -147,13 +168,14 @@ test("requestDistinctBranchName accepts a free name (one model call)", async () 
       },
     }),
   } as unknown as ModelRegistry;
-  const name = await requestDistinctBranchName(
+  const result = await requestDistinctBranchName(
     fakeModel,
     registry,
     "a prompt",
     async () => false,
   );
-  assert.equal(name, "my-branch");
+  assert.equal(result.name, "my-branch");
+  assert.equal(result.source, "model");
   assert.equal(calls.length, 1);
 });
 
@@ -165,23 +187,28 @@ test("requestDistinctBranchName retries the model on a collision", async () => {
       result: async () => assistantMessage(answers[i++] ?? "x"),
     }),
   } as unknown as ModelRegistry;
-  const name = await requestDistinctBranchName(
+  const result = await requestDistinctBranchName(
     fakeModel,
     registry,
     "a prompt",
     async (n) => n === "taken-branch",
   );
-  assert.equal(name, "fresh-branch");
+  assert.equal(result.name, "fresh-branch");
+  assert.equal(result.source, "model");
 });
 
 test("requestDistinctBranchName falls back to a unique suffix when every suggestion collides", async () => {
   const registry = fakeRegistry(assistantMessage("taken-branch"));
   const taken = new Set(["taken-branch", "taken-branch-2"]);
-  const name = await requestDistinctBranchName(
+  const result = await requestDistinctBranchName(
     fakeModel,
     registry,
     "a prompt",
     async (n) => taken.has(n),
   );
-  assert.equal(name, "taken-branch-3");
+  assert.equal(result.name, "taken-branch-3");
+  // The model's name collided and the deterministic suffix was used, so
+  // the collision is reported alongside the model's (successful) answer.
+  assert.equal(result.source, "model");
+  assert.match(result.reason ?? "", /already in use/);
 });

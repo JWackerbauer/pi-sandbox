@@ -36,16 +36,46 @@ export function nameFromPrompt(prompt: string): string {
   return toBranchName(name);
 }
 
+// A user-facing explanation of a degraded branch name: one whose source
+// is "prompt" (the model answer was not used) or that ended up on the
+// deterministic unique suffix after collisions. The cause, if any, comes
+// from `reason`.
+export function describeBranchNameFallback(
+  result: BranchNameResult,
+): string {
+  const cause = result.reason ? `: ${result.reason}` : "";
+  const usage =
+    result.source === "prompt"
+      ? `using "${result.name}" derived from the prompt instead`
+      : `using "${result.name}" (a unique suffix)`;
+  return `model-based branch naming failed${cause} — ${usage}`;
+}
+
+// The outcome of a branch-name request: the name plus where it came
+// from. Callers use `source`/`reason` to tell the user when the model
+// answer was not used, so a degraded naming is never silent.
+export interface BranchNameResult {
+  name: string;
+  /** "model" when the model's answer was used; "prompt" when the
+   * deterministic prompt-derived fallback was used. */
+  source: "model" | "prompt";
+  /** Human-readable cause of a degraded naming: present exactly when the
+   * final name is not the model's first suggestion (prompt fallback and/or
+   * a unique suffix after collisions). Absent on the plain model path. */
+  reason?: string;
+}
+
 // Ask the given model for a short summary of a build request and
 // sanitize the answer into a branch name. Never throws: a failed, hung,
-// or empty model call degrades to the deterministic prompt-derived name,
-// so branch naming can never block or fail a launch.
+// or empty model call degrades to the deterministic prompt-derived name
+// (reported via `source`/`reason`), so branch naming can never block or
+// fail a launch.
 export async function requestBranchName(
   model: Model<any>,
   registry: ExtensionContext["modelRegistry"],
   prompt: string,
   timeoutMs: number = BRANCH_NAME_TIMEOUT_MS,
-): Promise<string> {
+): Promise<BranchNameResult> {
   const userMessage: UserMessage = {
     role: "user",
     content: prompt,
@@ -59,6 +89,7 @@ export async function requestBranchName(
     messages: [userMessage],
   };
   let result: AssistantMessage | undefined;
+  let failure: string | undefined;
   try {
     // No `reasoning` option: streamSimple defaults to thinking "off", so
     // the whole maxTokens budget is available for the answer.
@@ -66,31 +97,48 @@ export async function requestBranchName(
       maxTokens: SUMMARY_MAX_TOKENS,
     });
     result = await withTimeout(stream.result(), timeoutMs);
-  } catch {
+  } catch (err) {
     // Naming is best-effort: a throwing call, a timeout, or a hung
     // provider all fall through to the prompt-derived name below.
+    failure = err instanceof Error ? err.message : String(err);
   }
   // Only a completed response counts. A thinking model that spent its
   // token budget on reasoning, a provider error (stopReason "error"),
   // or an aborted call yields no usable text — use the prompt instead of
   // the static "build" fallback that toBranchName would return.
-  const text =
-    result && (result.stopReason === "stop" || result.stopReason === "length")
-      ? result.content
-          .filter((block) => block.type === "text")
-          .map((block) => block.text)
-          .join(" ")
-          .trim()
-      : "";
+  const completed =
+    result !== undefined &&
+    (result.stopReason === "stop" || result.stopReason === "length");
+  const text = completed
+    ? result.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join(" ")
+        .trim()
+    : "";
   const fromModel = text.length > 0 ? toBranchName(text) : "";
-  return fromModel.length > 0 ? fromModel : nameFromPrompt(prompt);
+  if (fromModel.length > 0) return { name: fromModel, source: "model" };
+  const reason = failure ?? (
+    result?.stopReason === "error"
+      ? "the model call ended in a provider error"
+      : result !== undefined
+        ? "the model returned no text (the token budget may have been consumed by thinking)"
+        : "the model call did not complete"
+  );
+  return { name: nameFromPrompt(prompt), source: "prompt", reason };
 }
 
-// Reject with a timeout error after `ms`, whichever settles first.
+// Reject with a BranchNameTimeoutError after `ms`, whichever settles first.
+class BranchNameTimeoutError extends Error {}
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error(`timed out after ${ms}ms`)),
+      () =>
+        reject(
+          new BranchNameTimeoutError(
+            `the model call timed out after ${Math.round(ms / 1000)}s`,
+          ),
+        ),
       ms,
     );
     promise.then(
@@ -130,31 +178,40 @@ export async function uniqueBranchName(
 // the guest). Falls back to a deterministic unique suffix so a branch name
 // is always produced and spawn always succeeds. The first name is derived
 // from `prompt` exactly once; only on a collision is the model called again.
+// The returned `source`/`reason` describe the final name: a collision
+// resolved by a model retry is "model"; a name that ended up on the
+// deterministic suffix keeps the original fallback reason.
 export async function requestDistinctBranchName(
   model: Model<any>,
   registry: ExtensionContext["modelRegistry"],
   prompt: string,
   isTaken: (name: string) => Promise<boolean>,
-): Promise<string> {
-  let name = await requestBranchName(model, registry, prompt);
-  if (!(await isTaken(name))) return name;
+): Promise<BranchNameResult> {
+  let result = await requestBranchName(model, registry, prompt);
+  if (!(await isTaken(result.name))) return result;
 
   // The model's pick collided. Ask it again, telling it the names already in
   // use, up to 2 extra times.
-  const taken = new Set<string>([name]);
+  const taken = new Set<string>([result.name]);
   for (let attempt = 0; attempt < 2; attempt++) {
     const retryPrompt =
-      `The branch name "${name}" you just suggested is already in use in ` +
+      `The branch name "${result.name}" you just suggested is already in use in ` +
       `this repository. Pick a DIFFERENT short git branch name for the ` +
       `build request below. Avoid these names that are already taken: ` +
       `[${[...taken].join(", ")}]. Reply with a fresh kebab-case branch ` +
       `name only, no explanation, no quotes.\n\nBuild request:\n${prompt}`;
-    name = await requestBranchName(model, registry, retryPrompt);
-    if (!(await isTaken(name))) return name;
-    taken.add(name);
+    result = await requestBranchName(model, registry, retryPrompt);
+    if (!(await isTaken(result.name))) return result;
+    taken.add(result.name);
   }
 
   // Every model suggestion collided: give up on the model and fall back to a
   // deterministic unique suffix so spawn always succeeds.
-  return uniqueBranchName(name, isTaken);
+  const name = await uniqueBranchName(result.name, isTaken);
+  const collision = `"${result.name}" was already in use`;
+  return {
+    name,
+    source: result.source,
+    reason: result.reason ? `${result.reason}; ${collision}` : collision,
+  };
 }

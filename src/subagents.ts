@@ -15,7 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import type { VM } from "@earendil-works/gondolin";
-import { requestDistinctBranchName } from "./branch-name";
+import { describeBranchNameFallback, requestDistinctBranchName } from "./branch-name";
 import {
   guestWorkspace,
   SUBAGENT_LOOP_WINDOW,
@@ -184,12 +184,21 @@ export function createSubagentManager(
       // Ask the model for a branch name; if it collides with an existing
       // branch in the shared .git, recover by prompting the model again for a
       // distinct name (with a deterministic suffix as a final fallback).
-      const branch = await requestDistinctBranchName(
+      // Naming itself never throws: a degraded naming is reported to the
+      // user, not swallowed.
+      const named = await requestDistinctBranchName(
         model,
         ctx.modelRegistry,
         prompt,
         refExists,
       );
+      if (named.reason !== undefined) {
+        ctx.ui.notify(
+          `gondolin: ${describeBranchNameFallback(named)} for the subagent`,
+          "error",
+        );
+      }
+      const branch = named.name;
 
       // Base the subagent branch on the parent's branch when it exists in
       // the shared .git, otherwise on the current HEAD commit, so the
