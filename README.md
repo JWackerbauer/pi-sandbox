@@ -50,9 +50,11 @@ pi '/build-in-sandbox <what do you want to build?>'
   review and merge on the host: `git log` / `git diff`, then `git merge <branch>`.
 - Your user `!` bash commands run inside the guest too, so what the agent sees is what
   you see.
-- The workspace is ephemeral, but two scratch directories persist across VM restarts:
-  `/scratch` (shared by every session of this repo) and `/scratch-local` (private to the
-  current branch). Use them for caches and build outputs, not permanent storage.
+- The workspace is ephemeral, but two scratch directories persist across VM
+  restarts: `/scratch` (shared by every session of this repo) and
+  `/scratch-local` (private to the current branch). Use them only to persist
+  files across VM restarts — they are a persistence mechanism, not additional
+  disk space.
 - Resuming a sandbox session (`/resume`, `pi -c`) relaunches the VM for the same branch,
   so you pick up where you left off. When the session ends, its worktree is removed and
   the VM is closed — the branch, with its commits, is what stays.
@@ -185,6 +187,7 @@ for editor autocompletion and validation.
 {
   "vm": { "memory": "2G", "cpus": 4 },
   "subagent": { "memory": "512M", "cpus": 1 },
+  "rootfs": { "extra": "10G" },
   "env": { "NODE_ENV": "development" },
   "secrets": {
     "GH_TOKEN": { "hosts": ["github.com"] }
@@ -209,6 +212,12 @@ for editor autocompletion and validation.
   2 CPUs); `subagent` sizes subagent VMs, which run in parallel next to the main VM and
   are smaller by default (`512M` / 1 CPU). Values use the guest runner's native syntax
   (`memory`: qemu syntax like `"512M"`, `"1G"`; `cpus`: integer).
+- **`rootfs` — extra root disk space.** The guest's root disk is grown to the image's
+  own size plus `rootfs.extra` (a qemu disk size like `"5G"`, `"20G"`, default `"10G"`)
+  at every launch, so the agent always gets the configured amount of additional disk
+  space — even for a large `postBuild` image. It applies to every VM (main and
+  subagent). The root disk is a thin-provisioned qcow2 overlay, so the extra space
+  costs nothing on the host until it is actually written. Merged per field.
 - **`env` — environment variables.** A map of name → string value, set inside the guest
   VM and visible to every process the agent runs. Merged per key with the global map, so
   a project config can override a single variable while inheriting the rest. These are

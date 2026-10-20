@@ -12,6 +12,7 @@ import type {
   GhCliHost,
   GitIdentity,
   PostBuildConfig,
+  RootfsConfig,
   SecretConfig,
   VmSizing,
 } from "./config";
@@ -31,6 +32,7 @@ function readConfigFile(file: string): GondolinConfig {
     config.postStartup = normalizePostStartup(config.postStartup);
     config.github = normalizeGithub(config.github);
     config.git = normalizeGit(config.git);
+    config.rootfs = normalizeRootfs(config.rootfs);
     return config;
   } catch {
     return {};
@@ -75,6 +77,22 @@ function normalizeGithub(
     });
   }
   return orgs.length > 0 ? orgs : undefined;
+}
+
+// `rootfs` should be an object with an optional string `extra` field, but a
+// hand-written JSON file can hold anything. Normalize it so an ill-shaped
+// value never crashes the launch: a non-string/empty `extra` is dropped, and
+// any value that is not a plain object is treated as unset.
+function normalizeRootfs(value: unknown): RootfsConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const e = value as Record<string, unknown>;
+  const rootfs: RootfsConfig = {};
+  if (typeof e.extra === "string" && e.extra.trim().length > 0) {
+    rootfs.extra = e.extra;
+  }
+  return rootfs.extra !== undefined ? rootfs : undefined;
 }
 
 // `git` should be an object with optional string `name`/`email` fields, but
@@ -130,6 +148,16 @@ function mergeEnv(
   return Object.keys(env).length > 0 ? env : undefined;
 }
 
+// `rootfs` fields merge per field, so a project config can override just
+// `rootfs.extra` while a future field could be inherited.
+function mergeRootfs(
+  global: RootfsConfig | undefined,
+  project: RootfsConfig | undefined,
+): RootfsConfig | undefined {
+  const merged = { ...global, ...project };
+  return merged.extra !== undefined ? merged : undefined;
+}
+
 // `github` entries are keyed by host, so a project config can add a host or
 // override an existing one (e.g. swap a token) while inheriting the rest.
 function mergeGithub(
@@ -166,6 +194,7 @@ function mergeConfigs(
   const merged: GondolinConfig = {
     vm: mergeSizing(global.vm, project.vm),
     subagent: mergeSizing(global.subagent, project.subagent),
+    rootfs: mergeRootfs(global.rootfs, project.rootfs),
     secrets: { ...global.secrets, ...project.secrets },
     env: mergeEnv(global.env, project.env),
     github: mergeGithub(global.github, project.github),

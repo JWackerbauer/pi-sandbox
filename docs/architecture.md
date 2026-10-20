@@ -30,6 +30,14 @@ pi session (host)
 
 - `image/image.json` defines the stock Alpine image with git. It is not shipped
   prebuilt; `npm run build:basic-image` builds it into `image/assets` (gitignored).
+- The guest's root disk is grown to the image's own size plus the configured extra
+  space (config `rootfs.extra`, default 10G; `src/rootfs.ts` reads the image's
+  virtual size via `qemu-img info` and passes the total to the SDK's
+  `rootfs.size` option). The SDK grows the per-VM qcow2 overlay (the default `cow`
+  rootfs mode — the base image is never modified) to that total and runs
+  `resize2fs` in the guest after boot, before the VFS is ready (the stock image
+  ships `e2fsprogs-extra`). The overlay is thin-provisioned, so the extra space
+  costs nothing on the host until it is actually written.
 - The host's `.git` directory is mounted into the guest at `/source/.git`.
 - On launch (`launchDetachedVm` in `src/vm.ts`), the extension writes
   `src/scripts/prepare.sh` and a `prepare-commit-msg` git hook into the guest, then
@@ -309,6 +317,7 @@ stock image:
 | `src/config-loader.ts` | Loads `gondolin.json` (global + project), repo key, secret & GitHub host resolution |
 | `src/github.ts` | host-side `/git` magic-dir VFS provider (host `gh`), guest `gh` install/auth via secret placeholders, and the GitHub prompt line |
 | `src/image.ts` | Stock vs. custom image assets: build, cache, log capture, container detection |
+| `src/rootfs.ts` | Total root disk size: image virtual size + configured extra space |
 | `src/branch-name.ts` | Prompt → branch name summarizer and sanitizer |
 | `src/guest-path.ts` | Host path → guest path mapping |
 | `src/ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |

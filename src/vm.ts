@@ -18,6 +18,7 @@ import {
   resolveSecrets,
 } from "./config-loader";
 import { resolveImageAssets } from "./image";
+import { resolveRootfsSizeBytes } from "./rootfs";
 import {
   checkHostGhAuth,
   setupGhCli,
@@ -100,6 +101,13 @@ export async function launchDetachedVm(
   const sizing =
     (isSubagent ? config.subagent : config.vm) ??
     (isSubagent ? DEFAULT_SUBAGENT_SIZING : DEFAULT_VM_SIZING);
+
+  // Total root disk size: the image's own size plus the configured extra
+  // space (config `rootfs.extra`, default 10G). The SDK grows the per-VM
+  // qcow2 overlay to this size and resize2fs's the guest filesystem after
+  // boot, so the agent always gets the extra space even for large
+  // postBuild images.
+  const rootfsSizeBytes = resolveRootfsSizeBytes(imagePath, config.rootfs);
 
   // Shared secrets: values come from the host environment, the guest only
   // ever sees placeholders, and requests may only be sent to the hosts
@@ -186,6 +194,9 @@ export async function launchDetachedVm(
     },
     memory: sizing.memory,
     cpus: sizing.cpus,
+    rootfs: {
+      size: rootfsSizeBytes,
+    },
     httpHooks,
     env,
     vfs: {

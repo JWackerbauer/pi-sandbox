@@ -47,6 +47,7 @@ test("missing config files yield an empty config", () => {
   const cfg = loadGondolinConfig(localCwd, agentDir);
   assert.equal(cfg.vm, undefined);
   assert.equal(cfg.subagent, undefined);
+  assert.equal(cfg.rootfs, undefined);
   assert.equal(cfg.scratch, undefined);
   assert.equal(cfg.developMode, undefined);
   assert.equal(cfg.postStartup, undefined);
@@ -513,6 +514,31 @@ test("resolveGitIdentity applies the config override per field", () => {
       );
     },
   );
+});
+
+test("the rootfs config field is normalized and merged per field", () => {
+  // Ill-shaped values are dropped: non-objects, non-string `extra`, empty strings.
+  let env = makeEnv({ rootfs: "nope" }, null);
+  assert.equal(loadGondolinConfig(env.localCwd, env.agentDir).rootfs, undefined);
+  env = makeEnv({ rootfs: { extra: 42 } }, null);
+  assert.equal(loadGondolinConfig(env.localCwd, env.agentDir).rootfs, undefined);
+  env = makeEnv({ rootfs: { extra: "  " } }, null);
+  assert.equal(loadGondolinConfig(env.localCwd, env.agentDir).rootfs, undefined);
+
+  // A valid `extra` is kept as-is (validated at launch, see src/rootfs.ts).
+  env = makeEnv({ rootfs: { extra: "5G" } }, null);
+  assert.deepEqual(loadGondolinConfig(env.localCwd, env.agentDir).rootfs, {
+    extra: "5G",
+  });
+
+  // Per-field merge: a project `rootfs.extra` overrides the global one.
+  env = makeEnv(
+    { rootfs: { extra: "10G" } },
+    { rootfs: { extra: "20G" } },
+  );
+  assert.deepEqual(loadGondolinConfig(env.localCwd, env.agentDir).rootfs, {
+    extra: "20G",
+  });
 });
 
 test("the git config field is normalized and merged per field", () => {

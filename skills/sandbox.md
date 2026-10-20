@@ -21,7 +21,7 @@ No authenticated hosts are configured for this sandbox.
 - `/scratch` — shared by every sandbox session of this repo.
 - `/scratch-local` — private to the current work branch.
 
-Use them for caches and build outputs, not permanent storage.
+Use them only to persist files across VM restarts — they are a persistence mechanism, not additional workspace disk space.
 {{/scratch}}
 {{^scratch}}
 No scratch mounts are enabled for this sandbox.

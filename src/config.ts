@@ -89,6 +89,21 @@ export interface VmSizing {
 }
 
 /**
+ * Rootfs disk options. The guest's root disk is grown to the guest image's
+ * own size plus `extra` at every launch (see src/rootfs.ts), so the agent
+ * always gets the configured amount of additional disk space, no matter how
+ * large the image is (e.g. a `postBuild` image with a big toolchain baked in).
+ */
+export interface RootfsConfig {
+  /**
+   * Additional rootfs disk space beyond the guest image's own size, in qemu
+   * disk size syntax (a positive integer with an optional K/M/G/T/P/E
+   * suffix, e.g. "5G" or "20G"). Default per DEFAULT_ROOTFS_EXTRA.
+   */
+  extra?: string;
+}
+
+/**
  * The `postBuild` section of a Gondolin image config (mirrors the SDK's
  * `BuildConfig.postBuild`). When present in a gondolin.json, a custom image
  * is built at startup with these commands run inside the rootfs after
@@ -183,6 +198,11 @@ export interface GondolinConfig {
   /** Sizing for subagent VMs (smaller by default). */
   subagent?: VmSizing;
   /**
+   * Additional rootfs disk space for the guest VMs (see RootfsConfig).
+   * Applies to every VM (main and subagent). Merged per field.
+   */
+  rootfs?: RootfsConfig;
+  /**
    * Environment variables set inside the guest VM, visible to every process
    * the agent runs. Merged per key with the global config; a key that also
    * appears in `secrets` keeps the secret's placeholder value.
@@ -250,6 +270,11 @@ export interface GondolinConfig {
 // deliberately smaller since they run in parallel alongside the main VM.
 export const DEFAULT_VM_SIZING: Required<VmSizing> = { memory: "1G", cpus: 2 };
 export const DEFAULT_SUBAGENT_SIZING: Required<VmSizing> = { memory: "512M", cpus: 1 };
+
+// Default additional rootfs space, on top of the guest image's own size.
+// The root disk is a thin-provisioned qcow2 overlay, so the extra space
+// costs nothing on the host until it is actually written.
+export const DEFAULT_ROOTFS_EXTRA = "10G";
 
 // ─── Scratch mounts ──────────────────────────────────────────────────────
 //

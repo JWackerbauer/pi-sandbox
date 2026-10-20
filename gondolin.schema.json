@@ -14,6 +14,10 @@
       "$ref": "#/$defs/vmSizing",
       "description": "Sizing for subagent VMs (smaller by default: memory 512M, cpus 1)."
     },
+    "rootfs": {
+      "$ref": "#/$defs/rootfs",
+      "description": "Extra root disk space for the guest VMs. The root disk is grown to the image's own size plus `extra` at every launch. Applies to every VM (main and subagent). Merged per field."
+    },
     "env": {
       "type": "object",
       "additionalProperties": { "type": "string" },
@@ -87,6 +91,17 @@
           "type": "integer",
           "minimum": 1,
           "description": "CPU count."
+        }
+      }
+    },
+    "rootfs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extra": {
+          "type": "string",
+          "pattern": "^[0-9]+\\s*[KkMmGgTtPpEe]?[Ii]?[Bb]?$",
+          "description": "Additional rootfs disk space beyond the guest image's own size, in qemu disk size syntax (a positive integer with an optional K/M/G/T/P/E suffix, e.g. \"5G\" or \"20G\"). Default: \"10G\"."
         }
       }
     },
