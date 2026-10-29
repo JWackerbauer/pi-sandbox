@@ -17,7 +17,7 @@ worktrees.
 
 ```
 pi session (host)
-└── extension instance (src/index.ts)
+└── extension instance (index.ts → src/index.ts)
     └── GondolinSandbox (src/vm.ts)
         └── detached VM (Gondolin SDK)
             ├── /source/.git  ← host <repo>/.git (RealFSProvider mount)
@@ -317,7 +317,8 @@ stock image:
 
 | File | Purpose |
 |---|---|
-| `src/index.ts` | Extension entry point: registers the command, tools, and session hooks |
+| `index.ts` | Extension entry point (re-exports `src/index.ts`; kept at the package root so pi lists the extension as "pi-sandbox") |
+| `src/index.ts` | Extension factory: registers the command, tools, and session hooks |
 | `src/commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
 | `src/vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal, post-startup commands |
 | `src/subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
