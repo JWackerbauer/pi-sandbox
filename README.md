@@ -56,6 +56,24 @@ The extension can be configured using `gondolin.json`.
 
 Detailed configuration reference can be found [here](docs/configuration.md).
 
+### Secrets
+
+Gondolin offers functionality for providing your agents with secrets without leaking them to context: [Documentation](https://earendil-works.github.io/gondolin/secrets/)
+
+You can reference host environment variables in `gondolin.json` and add a list of allowed egress hosts: 
+
+```json
+{
+    "secrets": {
+        "GH_TOKEN": {
+            "hosts": ["api.github.com"]
+        }
+    }
+}
+```
+
+The extension loads `.env` from your workspace (never exposed to agent); or you can use [`direnv`](https://direnv.net/).
+
 ### `gondolin.json` Examples:
 
 **dotnet**
