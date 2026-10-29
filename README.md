@@ -105,16 +105,19 @@ their branches outlive their VMs. See
 
 ### The bundled `subagents` skill
 
-The package ships `skills/subagents.md`, which pi loads as a `subagents` skill: the
+The package ships `templates/skills/subagents.md`, which pi loads as a `subagents`
+skill: the
 subagent usage guide (spawning, monitoring, aborting, merging) as on-demand skill
 content instead of permanent system prompt, so it only costs tokens when the agent
 loads it.
 
 ### Skills as templates
 
-The package's `skills/` directory holds skill **templates**, not finished skills. At
-load time each `.md` file is written as a **stub** — its real (static, config-
-independent) front matter plus a placeholder body — into a per-process host temp dir,
+The package's `templates/skills/` directory holds skill **templates**, not finished
+skills — each is a `.md` file with YAML front matter (the `name`/`description` pi
+needs). At load time each skill template is written as a **stub** — its real
+(static, config-independent) front matter plus a placeholder body — into a
+per-process host temp dir,
 which the extension serves via `resources_discover`. When the sandbox is entered the
 real bodies are rendered in place (same paths) with a context derived from the
 effective config. This keeps environment-specific info (which hosts are
@@ -154,7 +157,8 @@ and `gh` CLI sections only when each is enabled.
 
 ### The bundled `github` skill
 
-The package also ships `skills/github.md`, which pi loads as a `github` skill: how to
+The package also ships `templates/skills/github.md`, which pi loads as a `github`
+skill: how to
 use the `/git` magic dir and the `gh` CLI to access the configured GitHub hosts. Only
 relevant when the `github` config is present (see below).
 
@@ -166,8 +170,10 @@ non-display custom message (invisible in the UI, distinct from your prompt in th
 conversation) that is attached ahead of the first sandbox turn's user prompt. It tells
 the agent that the parameters of its ongoing session have changed — new working
 directory `/<branch>`, branch rules, persistence — and lists the skills to check for
-further information. It is rendered from `templates/preamble.md` (same template
-tags) with the work branch, the guest workspace, and the list of available skills,
+further information. It is rendered from `templates/preamble.md` (a plain
+template, not a skill — the skill templates live in `templates/skills/`; same
+template tags) with the work branch, the guest workspace, and the list of
+available skills,
 and is sent when `/build-in-sandbox` starts, and on `session_start` when a
 sandbox session is resumed, reloaded, or forked.
 
@@ -314,8 +320,11 @@ lifecycle, sessions, subagent internals, GitHub access — see
 
 - [docs/architecture.md](docs/architecture.md) — how it works: guest setup, tool
   redirection, VM lifecycle, sessions, subagents, images
-- [skills/subagents.md](skills/subagents.md) — the bundled subagent usage skill
-- [skills/sandbox.md](skills/sandbox.md) — the sandbox skill template (rendered with
-  the config at load time)
+- [templates/skills/subagents.md](templates/skills/subagents.md) — the bundled
+  subagent usage skill
+- [templates/skills/sandbox.md](templates/skills/sandbox.md) — the sandbox skill
+  template (rendered with the config at load time)
+- [templates/preamble.md](templates/preamble.md) — the sandbox preamble template
+  (rendered with the work branch, guest workspace, and skill list)
 - [docs/RFC-devcontainer-images-and-makefile.md](docs/RFC-devcontainer-images-and-makefile.md) —
   deferred feature proposals

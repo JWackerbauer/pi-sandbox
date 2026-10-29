@@ -23,11 +23,12 @@ import {
 } from "./config";
 import { loadGondolinConfig } from "./config-loader";
 import { loadDotEnv } from "./dotenv";
-import { renderPreamble, skillNames } from "./preamble";
+import { renderPreamble } from "./preamble";
 import {
   buildSkillContext,
   isHostServedPath,
   renderedSkillPaths,
+  skillNames,
   stubSkillPaths,
 } from "./skills";
 import { createSandbox } from "./vm";
@@ -54,10 +55,11 @@ export default function (pi: ExtensionAPI) {
   // not already set in the environment are added.
   loadDotEnv(path.join(localCwd, ".env"));
 
-  // Package root and the skills template dir, shared by the preamble and
-  // the resources_discover hook below.
+  // Package root and the template dirs: the skill templates live in
+  // templates/skills/, the (non-skill) preamble template in templates/.
   const packageDir = path.resolve(__dirname, "..");
-  const skillsTemplateDir = path.join(packageDir, "skills");
+  const templatesDir = path.join(packageDir, "templates");
+  const skillsTemplateDir = path.join(templatesDir, "skills");
 
   // Write the skill stubs at load time: real (static, config-independent)
   // front matter plus a placeholder body. pi discovers skills only at
@@ -114,7 +116,7 @@ export default function (pi: ExtensionAPI) {
       {
         customType: SANDBOX_PREAMBLE_TYPE,
         content: renderPreamble(
-          packageDir,
+          templatesDir,
           branch,
           skillNames(skillsTemplateDir),
         ),
@@ -632,8 +634,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Serve gondolin's skills as rendered templates: the raw .md files in the
-  // package's skills/ directory are templates, rendered with a context
-  // derived from the config (available github hosts, secrets, features).
+  // package's templates/skills/ directory are templates, rendered with a
+  // context derived from the config (available github hosts, secrets,
+  // features).
   // Stubs go in at load time (session start); the real bodies are rendered
   // over them in enterSandbox.
   pi.on("resources_discover", () => {

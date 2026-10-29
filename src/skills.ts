@@ -1,10 +1,16 @@
-// Builds the template context for gondolin's skill templates and renders the
-// package's `skills/` templates into a per-process temp directory. The
-// rendered directory is returned for use as a `skillPaths` entry on
-// resources_discover (see index.ts), so environment-specific info lives in
-// on-demand skill content instead of the system prompt. The files live on
-// the host only; the wrapped read tool serves them to the agent (see
-// index.ts), so the sandbox worktree is never touched.
+// The package's `templates/skills/` directory holds the gondolin skill
+// templates — the `.md` files with YAML front matter (pi needs the
+// `name`/`description`). The plain (non-skill) preamble template sits one
+// level up, in `templates/preamble.md`, so it never reaches this module; the
+// front-matter check below is a safety net in case a front-matter-less .md
+// ever lands in the dir. This module builds the
+// template context for the skill templates and renders them (or stubs them,
+// before the sandbox starts) into a per-process temp directory. The rendered
+// directory is returned for use as a `skillPaths` entry on resources_discover
+// (see index.ts), so environment-specific info lives in on-demand skill
+// content instead of the system prompt. The files live on the host only; the
+// wrapped read tool serves them to the agent (see index.ts), so the sandbox
+// worktree is never touched.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -18,6 +24,34 @@ const STUB_SKILL_BODY =
   "The gondolin sandbox is not active in this session yet. Run `" +
   "/build-in-sandbox` to start it — this skill's content is populated " +
   "when the sandbox starts.";
+
+/**
+ * The `.md` file names (without extension) of the skill templates in `dir`,
+ * sorted. A skill template carries YAML front matter (the `name`/
+ * `description` pi needs); a front-matter-less `.md` is not a skill and is
+ * excluded. Returns `[]` when the directory does not exist.
+ */
+export function skillNames(dir: string): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => {
+      if (!n.endsWith(".md")) return false;
+      let source: string;
+      try {
+        source = fs.readFileSync(path.join(dir, n), "utf8");
+      } catch {
+        return false; // unreadable entry (or a directory) — not a skill
+      }
+      return frontMatterBlock(source) !== "";
+    })
+    .map((n) => n.slice(0, -3))
+    .sort();
+}
 
 /**
  * Build the template context for gondolin skills from the effective config:
@@ -84,6 +118,7 @@ export function stubSkillPaths(templateDir: string): string {
     }
     if (!isFile) continue;
     const frontMatter = frontMatterBlock(fs.readFileSync(srcPath, "utf8"));
+    if (!frontMatter) continue; // not a skill template
     fs.writeFileSync(
       path.join(outDir, name),
       `${frontMatter}\n${STUB_SKILL_BODY}\n`,
@@ -138,7 +173,10 @@ export function renderedSkillPaths(
       continue;
     }
     if (!isFile) continue;
-    let rendered = renderTemplate(fs.readFileSync(srcPath, "utf8"), context);
+    const source = fs.readFileSync(srcPath, "utf8");
+    // Not a skill template — skip it.
+    if (!frontMatterBlock(source)) continue;
+    let rendered = renderTemplate(source, context);
     // Section tags leave blank lines where a block was omitted; collapse runs
     // of three or more newlines to a single blank line.
     rendered = rendered.replace(/\n{3,}/g, "\n\n");

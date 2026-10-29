@@ -4,9 +4,11 @@
 // cache, so the preamble travels as a (non-display) custom message attached
 // to the first sandbox turn's user prompt (see index.ts / build-in-sandbox.ts).
 //
-// The preamble is a template (templates/preamble.md) rendered with the work
-// branch, the guest workspace, and the list of the package's skills — the
-// on-demand reference material for everything else.
+// The preamble is a template (templates/preamble.md — a plain template,
+// not a skill: the skill templates live one level down, in
+// templates/skills/) rendered with the work branch, the guest workspace,
+// and the list of the package's skills — the on-demand reference material
+// for everything else.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -17,38 +19,16 @@ import { renderTemplate } from "./skill-template";
 export const PREAMBLE_TEMPLATE_FILE = "preamble.md";
 
 /**
- * The `.md` file names (without extension) in `dir`, sorted. Returns `[]`
- * when the directory does not exist.
- */
-export function skillNames(dir: string): string[] {
-  let names: string[];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  return names
-    .filter((n) => n.endsWith(".md"))
-    .map((n) => n.slice(0, -3))
-    .sort();
-}
-
-/**
- * Render the sandbox preamble for `branch` from the package's
- * `templates/preamble.md`. `packageDir` is the package root (the parent of
- * this `src` directory); `skills` is the list of available skill names
- * (typically `skillNames(<packageDir>/skills)`).
+ * Render the sandbox preamble for `branch` from `preamble.md` in the
+ * package's `templates/` dir (`templateDir`); `skills` is the list of
+ * available skill names (typically `skillNames(<templates>/skills)`).
  */
 export function renderPreamble(
-  packageDir: string,
+  templateDir: string,
   branch: string,
   skills: string[],
 ): string {
-  const templatePath = path.join(
-    packageDir,
-    "templates",
-    PREAMBLE_TEMPLATE_FILE,
-  );
+  const templatePath = path.join(templateDir, PREAMBLE_TEMPLATE_FILE);
   const template = fs.readFileSync(templatePath, "utf8");
   const rendered = renderTemplate(template, {
     branch,

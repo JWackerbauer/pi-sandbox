@@ -99,9 +99,10 @@ with wrappers that route their file operations into the guest (implementations i
 
 The agent is told about the sandbox via a **preamble**, not by modifying the system
 prompt (a modified system prompt invalidates the inference prefix cache on the
-inference side). The preamble is a template (`templates/preamble.md`, rendered by
-`src/preamble.ts` with the work branch, the guest workspace, and the list of the
-package's skills) that is sent as a **non-display custom message**
+inference side). The preamble is a template (`templates/preamble.md` — a plain
+template, not a skill; the skill templates live in `templates/skills/`) rendered
+by `src/preamble.ts` with the work branch, the guest workspace, and the list of
+the package's skills) that is sent as a **non-display custom message**
 (`pi.sendMessage` with `customType: gondolin.sandbox-preamble`, `display: false`) — a
 distinct message role ahead of the first sandbox user prompt, invisible in the UI.
 It tells the model that the parameters of its ongoing session have changed: it is in
@@ -113,9 +114,15 @@ refreshes the context, covering config changes).
 
 Environment-specific details (scratch mounts, develop mode, wired-in secrets/hosts,
 GitHub access) and subagent management instructions are not in the system prompt or
-the preamble; they ship as skills (`skills/sandbox.md`, `skills/subagents.md`,
-`skills/github.md`) that pi loads from this package, so they only cost tokens when
-the agent loads the skill.
+the preamble; they ship as skills (`templates/skills/sandbox.md`,
+`templates/skills/subagents.md`, `templates/skills/github.md`) that pi loads from
+this package, so they only cost tokens when the agent loads the skill.
+
+The skill templates live in `templates/skills/` (`.md` files with YAML front
+matter — pi needs the `name`/`description`); the non-skill preamble template is
+`templates/preamble.md`, one level up, so it never reaches the skill pipeline
+(`skillNames`/`stubSkillPaths`/`renderedSkillPaths` in `src/skills.ts`). The
+pipeline additionally skips front-matter-less `.md` files as a safety net.
 
 The skill templates are rendered at load time into a per-process host temp dir and
 served via `resources_discover`. Pi's system prompt lists every skill by its **host
@@ -254,7 +261,8 @@ enable both):
   the config level (with a launch notice) instead of as a 401 deep in the guest.
 
 How the agent is told about the enabled features follows the skill-templating
-architecture (above): the bundled `github` skill (`skills/github.md`) is rendered
+architecture (above): the bundled `github` skill (`templates/skills/github.md`)
+is rendered
 with `magic_hosts` and `gh_cli_hosts` from the config, so its magic-dir and `gh` CLI
 sections appear only when each is enabled — that is how the main session learns about
 the feature. Subagents are created with `noSkills`, so they instead get a one-line
@@ -323,6 +331,8 @@ stock image:
 | `src/ops/` | Gondolin-backed implementations of the read/write/edit/bash tool operations |
 | `src/scripts/prepare.sh` | Guest-side git setup, run on VM launch |
 | `src/scripts/prepare-commit-msg` | Git hook adding the pi-agent co-author trailer |
-| `skills/subagents.md` | Bundled subagent usage skill |
-| `skills/github.md` | Bundled GitHub (`gh` CLI + magic dir) usage skill |
+| `templates/skills/subagents.md` | Bundled subagent usage skill |
+| `templates/skills/github.md` | Bundled GitHub (`gh` CLI + magic dir) usage skill |
+| `templates/skills/sandbox.md` | Bundled sandbox skill (reachable hosts, secrets, features) |
+| `templates/preamble.md` | Sandbox preamble template (non-skill; branch, workspace, skill list) |
 | `image/image.json` | Gondolin guest image definition (stock image) |
