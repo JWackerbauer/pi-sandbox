@@ -54,7 +54,45 @@ The extension can be configured using `gondolin.json`.
 - Global configuration: `~/.pi/agent/gondolin.json`
 - Local configuration: `path/to/my/repo/.pi/gondolin.json`
 
-Detailed configuration reference can be found [here](docs/configuration.md). 
+Detailed configuration reference can be found [here](docs/configuration.md).
+
+### `gondolin.json` Examples:
+
+**dotnet**
+```json
+{
+    "secrets": {
+        "NUGET_TOKEN": {
+            "hosts": ["pkgs.dev.azure.com"]
+        }
+    },
+    "postBuild": {
+        "commands": [
+            "apk add dotnet10-sdk aspnetcore10-runtime dotnet10-runtime"
+        ]
+    },
+    "postStartup": [
+        "dotnet nuget update source releases --username empty --password $NUGET_TOKEN --store-password-in-clear-text"
+    ],
+    "env": {
+        "NUGET_PACKAGES": "/scratch/.nuget/packages"
+    }
+}
+```
+
+**pi extension development:**
+```json
+{
+    "developMode": true,
+    "github": [
+        {"host": "github.com", "ghCliToken": "GH_TOKEN", "magicDir": true}
+    ],
+    "coAuthor": true,
+    "postBuild": {
+        "commands": ["apk add nodejs npm"]
+    }
+}
+```
 
 ## Contributing
 
