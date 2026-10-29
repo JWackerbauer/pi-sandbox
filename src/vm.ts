@@ -17,6 +17,7 @@ import {
   resolveGitIdentity,
   resolveSecrets,
 } from "./config-loader";
+import { maybeLoadDotEnv } from "./dotenv";
 import { resolveImageAssets } from "./image";
 import { resolveRootfsSizeBytes } from "./rootfs";
 import {
@@ -87,6 +88,10 @@ export async function launchDetachedVm(
   // and always current.
   const agentDir = path.join(os.homedir(), ".pi", "agent");
   const config = loadGondolinConfig(localCwd, agentDir);
+  // Opt-in (config envFile: true): load the host's .env into process.env
+  // before any resolver reads the environment (secrets, gh CLI tokens).
+  // loadDotEnv never overrides existing env vars, so this is idempotent.
+  maybeLoadDotEnv(localCwd, config);
 
   // Image assets: the stock image, or a custom image built from the config's
   // postBuild section (cached; built on first use).

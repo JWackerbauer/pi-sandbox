@@ -13,6 +13,7 @@
     { "host": "github.com", "magicDir": true, "ghCliToken": "GH_TOKEN" },
     { "host": "myorg.ghe.com", "ghCliToken": "MYORG_GHE_TOKEN" }
   ],
+  "envFile": true,
   "scratch": true,
   "git": { "name": "Jan Wackerbauer", "email": "jan.wackerbauer@gmail.com" },
   "developMode": false,
@@ -69,11 +70,12 @@
     the generated `~/.config/gh/hosts.yml` and an env var), and the http hooks
     substitute the real token at egress. How the agent uses `gh` and the magic dir is
     documented in the bundled `github` skill (see [above](#the-bundled-github-skill)).
-- **`.env` — host environment file.** At startup the extension loads a host
-  `<repo>/.env` into the host's `process.env`, so its values are available for secret
-  resolution (a `secrets` entry with no `value` field falls back to the env var named by
-  the key). Existing environment variables are **not** overridden — the real environment
-  always wins over the file. Missing or unreadable files are ignored.
+- **`.env` — host environment file (opt-in).** When `"envFile": true`, the
+  extension loads a host `<repo>/.env` into the host's `process.env` before
+  resolving `secrets` and `ghCliToken` entries, so their values can be sourced
+  from the file. The file is never exposed to the guest or the agent. Existing
+  environment variables are **not** overridden — the real environment always
+  wins over the file. Missing or unreadable files are ignored. Default `false`.
 - **`scratch` — scratch mounts.** Two host directories are mounted into every guest so
   files survive VM/session restarts (they live under the host's tempdir, not in the
   VM's ephemeral disk):

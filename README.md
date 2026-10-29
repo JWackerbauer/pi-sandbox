@@ -72,7 +72,7 @@ You can reference host environment variables in `gondolin.json` and add a list o
 }
 ```
 
-The extension loads `.env` from your workspace (never exposed to agent); or you can use [`direnv`](https://direnv.net/).
+Set `"envFile": true` in `gondolin.json` to have the extension load `.env` from your workspace (never exposed to agent); or you can use [`direnv`](https://direnv.net/).
 
 ### `gondolin.json` Examples:
 

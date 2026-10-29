@@ -50,6 +50,7 @@ test("missing config files yield an empty config", () => {
   assert.equal(cfg.rootfs, undefined);
   assert.equal(cfg.scratch, undefined);
   assert.equal(cfg.developMode, undefined);
+  assert.equal(cfg.envFile, undefined);
   assert.equal(cfg.postStartup, undefined);
   assert.equal(cfg.postBuild, undefined);
   assert.equal(cfg.env, undefined);
@@ -111,6 +112,27 @@ test("coAuthor project overrides global", () => {
   const fromProject = makeEnv({ coAuthor: true }, { coAuthor: false });
   assert.equal(
     loadGondolinConfig(fromProject.localCwd, fromProject.agentDir).coAuthor,
+    false,
+  );
+});
+
+test("envFile defaults to off and project overrides global", () => {
+  // Absent in both → undefined (off; .env is not loaded).
+  const off = makeEnv(null, null);
+  assert.equal(
+    loadGondolinConfig(off.localCwd, off.agentDir).envFile,
+    undefined,
+  );
+  // Global true, project unset → true (inherited).
+  const fromGlobal = makeEnv({ envFile: true }, null);
+  assert.equal(
+    loadGondolinConfig(fromGlobal.localCwd, fromGlobal.agentDir).envFile,
+    true,
+  );
+  // Global true, project false → false (project wins).
+  const fromProject = makeEnv({ envFile: true }, { envFile: false });
+  assert.equal(
+    loadGondolinConfig(fromProject.localCwd, fromProject.agentDir).envFile,
     false,
   );
 });

@@ -22,7 +22,7 @@ import {
   type SandboxEntryData,
 } from "./config";
 import { loadGondolinConfig } from "./config-loader";
-import { loadDotEnv } from "./dotenv";
+import { maybeLoadDotEnv } from "./dotenv";
 import { renderPreamble } from "./preamble";
 import {
   buildSkillContext,
@@ -49,11 +49,6 @@ export default function (pi: ExtensionAPI) {
   const localGitDir = `${localCwd}/.git`;
   // The pi agent dir, where the global gondolin.json lives.
   const agentDir = path.join(os.homedir(), ".pi", "agent");
-
-  // Load the host's .env into process.env so its values are available for
-  // secret resolution (see config-loader.ts resolveSecrets). Only variables
-  // not already set in the environment are added.
-  loadDotEnv(path.join(localCwd, ".env"));
 
   // Package root and the template dirs: the skill templates live in
   // templates/skills/, the (non-skill) preamble template in templates/.
@@ -228,6 +223,11 @@ export default function (pi: ExtensionAPI) {
     // JSON read; loading it here (at entry, not load) keeps the stub path
     // config-free and the render always current.
     const config = loadGondolinConfig(localCwd, agentDir);
+    // Opt-in (config envFile: true): load the host's .env before the gh CLI
+    // hosts below are resolved from the environment (secret/token resolution
+    // at VM launch does the same; loadDotEnv never overrides existing vars,
+    // so running it more than once is harmless).
+    maybeLoadDotEnv(localCwd, config);
     renderedSkillPaths(skillsTemplateDir, buildSkillContext(config));
 
     // Detached subagent sessions: each gets its own VM and work branch,

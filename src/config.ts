@@ -225,6 +225,15 @@ export interface GondolinConfig {
    */
   github?: GitHubOrgConfig[];
   /**
+   * Opt in to loading the host's `.env` file (the `.env` in the repo
+   * root) into the host process's environment before secret and gh CLI
+   * token resolution, so a `secrets` or `ghCliToken` value can be sourced
+   * from the file. The file is never exposed to the guest or the agent.
+   * Default false. Existing environment variables always win over the
+   * file.
+   */
+  envFile?: boolean;
+  /**
    * Enable the per-repo and per-branch scratch mounts (host tempdir →
    * guest). Default true. Set false to disable both.
    */

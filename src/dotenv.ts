@@ -1,10 +1,13 @@
-// Loads a host `.env` file into `process.env` so its values are available for
-// secret resolution (see config-loader.ts resolveSecrets). This is a minimal,
-// dependency-free `.env` parser: it reads `KEY=VALUE` lines and adds each to
-// the process environment only when that variable is not already set, so a
-// real environment always wins over the file.
+// Loads a host `.env` file into `process.env` so its values are available
+// for secret resolution (see config-loader.ts resolveSecrets). Loading is
+// opt-in via config `envFile: true` (see maybeLoadDotEnv). This is a
+// minimal, dependency-free `.env` parser: it reads `KEY=VALUE` lines and
+// adds each to the process environment only when that variable is not
+// already set, so a real environment always wins over the file.
 
 import fs from "node:fs";
+import path from "node:path";
+import type { GondolinConfig } from "./config";
 
 /**
  * Read the `.env` file at `file` and add its `KEY=VALUE` pairs to
@@ -63,4 +66,21 @@ export function loadDotEnv(file: string): number {
     }
   }
   return set;
+}
+
+/**
+ * When the config opts in (`envFile: true`), load the host's `.env` file
+ * (the `.env` in `localCwd`) into `process.env` so its values are available
+ * for secret / gh CLI token resolution. No-op otherwise. Call it after the
+ * config is loaded and before any resolver that reads the host environment
+ * (resolveSecrets, resolveGhCliHosts). See loadDotEnv for the rules: existing
+ * env vars win, missing/unreadable files are ignored, and nothing is ever
+ * exposed to the guest.
+ */
+export function maybeLoadDotEnv(
+  localCwd: string,
+  config: GondolinConfig,
+): void {
+  if (config.envFile !== true) return;
+  loadDotEnv(path.join(localCwd, ".env"));
 }

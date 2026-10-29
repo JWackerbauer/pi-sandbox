@@ -200,6 +200,9 @@ function mergeConfigs(
     github: mergeGithub(global.github, project.github),
     git: mergeGit(global.git, project.git),
   };
+  if (global.envFile !== undefined || project.envFile !== undefined) {
+    merged.envFile = project.envFile ?? global.envFile;
+  }
   if (global.scratch !== undefined || project.scratch !== undefined) {
     merged.scratch = project.scratch ?? global.scratch;
   }

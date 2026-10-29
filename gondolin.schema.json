@@ -33,6 +33,11 @@
       "items": { "$ref": "#/$defs/githubHost" },
       "description": "GitHub hosts the agent can access. Merged by host: a project entry overrides or adds a host."
     },
+    "envFile": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opt in to loading the host `.env` file (the `.env` in the repo root) into the host environment before secret and gh CLI token resolution, so a `secrets` or `ghCliToken` value can be sourced from the file. The file is never exposed to the guest or the agent. Existing environment variables always win over the file. Default false."
+    },
     "scratch": {
       "type": "boolean",
       "default": true,

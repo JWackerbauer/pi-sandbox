@@ -23,6 +23,7 @@ import {
   SUBAGENT_STUCK_IDLE_MS,
 } from "./config";
 import { loadGondolinConfig, resolveMagicDirHosts, resolveGhCliHosts } from "./config-loader";
+import { maybeLoadDotEnv } from "./dotenv";
 import { githubPromptLine } from "./github";
 import { createGondolinBashOps } from "./ops/bash";
 import { createGondolinEditOps } from "./ops/edit";
@@ -680,6 +681,9 @@ function sandboxExtras(localCwd: string): {
 } {
   try {
     const config = loadGondolinConfig(localCwd, getAgentDir());
+    // Opt-in (config envFile: true): load the host's .env before the gh CLI
+    // hosts below are resolved from the environment.
+    maybeLoadDotEnv(localCwd, config);
     return {
       developMode: config.developMode === true,
       github: githubPromptLine(
