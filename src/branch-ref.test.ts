@@ -10,8 +10,10 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveSandboxBranch } from "./branch-ref";
-
+import {
+  listSandboxableBranches,
+  resolveSandboxBranch,
+} from "./branch-ref";
 function run(cwd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -144,6 +146,43 @@ test("unknown local and remote names resolve to null", async () => {
     assert.equal(await resolveSandboxBranch(dir, "nope"), null);
     assert.equal(await resolveSandboxBranch(dir, "origin/nope"), null);
     assert.equal(await resolveSandboxBranch(dir, "  "), null);
+  } finally {
+    cleanup();
+  }
+});
+
+// listSandboxableBranches feeds /sandbox-on-branch's no-argument selection
+// list: local + remote branches, minus anything already checked out, local
+// first then remote (each group sorted), and without the origin/HEAD symref.
+test("lists local + remote branches, omitting checked-out ones", async () => {
+  const { dir, cleanup } = await makeRepo();
+  try {
+    // main is checked out in the main worktree (omitted); feature-local is a
+    // free local branch; origin/main maps to the checked-out local main
+    // (omitted); origin/feature-remote is a free remote branch; origin/HEAD
+    // is a symref (omitted).
+    assert.deepEqual(await listSandboxableBranches(dir), [
+      "feature-local",
+      "origin/feature-remote",
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("a branch checked out in a secondary worktree drops out of the list", async () => {
+  const { dir, cleanup } = await makeRepo();
+  try {
+    const wt = `${dir}-wt`;
+    await run(dir, ["worktree", "add", "-q", wt, "feature-local"]);
+    try {
+      // feature-local is now checked out, so only the remote branch remains.
+      assert.deepEqual(await listSandboxableBranches(dir), [
+        "origin/feature-remote",
+      ]);
+    } finally {
+      await run(dir, ["worktree", "remove", "--force", wt]);
+    }
   } finally {
     cleanup();
   }

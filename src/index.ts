@@ -24,6 +24,7 @@ import { maybeLoadDotEnv } from "./dotenv";
 import { renderExitPreamble, renderPreamble } from "./preamble";
 import { lastSandboxBranch } from "./last-sandbox-branch";
 import { resolveSandboxBranch } from "./branch-ref";
+import { listSandboxableBranches } from "./branch-ref";
 import {
   buildSkillContext,
   isHostServedPath,
@@ -633,6 +634,7 @@ export default function (pi: ExtensionAPI) {
       sendSandboxPreamble(ctx, branch);
     },
     resolveBranch: (name) => resolveSandboxBranch(localCwd, name),
+    listBranches: () => listSandboxableBranches(localCwd),
   });
 
   // Bring the sandbox back up when a session that ran in the sandbox is

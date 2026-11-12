@@ -20,6 +20,12 @@ export interface SandboxOnBranchOptions {
    * branch.
    */
   resolveBranch: (name: string) => Promise<ResolvedSandboxBranch | null>;
+  /**
+   * The branches the command can sandbox (local + remote, minus any already
+   * checked out), for the no-argument selection list. Local branches first,
+   * then remote, each group sorted.
+   */
+  listBranches: () => Promise<string[]>;
 }
 
 // /sandbox-on-branch <branch>
@@ -46,14 +52,28 @@ export function registerSandboxOnBranchCommand(
     handler: async (args, ctx) => {
       let name = args.trim();
       if (name.length === 0) {
-        const entered = await ctx.ui.input(
-          "Which branch do you want to sandbox?",
-        );
-        if (entered === undefined) return; // user cancelled the dialog
-        name = entered.trim();
-        if (name.length === 0) {
-          ctx.ui.notify("gondolin: no branch given", "warning");
-          return;
+        // No explicit branch: offer a selection list of the branches that can
+        // be sandboxed (local + remote, minus any already checked out). Fall
+        // back to free text when there is nothing to list, so a name that
+        // exists but wasn't listed can still be entered.
+        const candidates = await opts.listBranches();
+        if (candidates.length > 0) {
+          const chosen = await ctx.ui.select(
+            "Choose a branch to sandbox (checked-out branches are omitted):",
+            candidates,
+          );
+          if (chosen === undefined) return; // user cancelled the selector
+          name = chosen.trim();
+        } else {
+          const entered = await ctx.ui.input(
+            "No sandboxable branches found — enter a branch name:",
+          );
+          if (entered === undefined) return; // user cancelled the dialog
+          name = entered.trim();
+          if (name.length === 0) {
+            ctx.ui.notify("gondolin: no branch given", "warning");
+            return;
+          }
         }
       }
 

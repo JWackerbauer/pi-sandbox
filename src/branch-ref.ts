@@ -106,3 +106,46 @@ export async function resolveSandboxBranch(
     ...(checkedOutAt !== undefined ? { checkedOutAt } : {}),
   };
 }
+
+/**
+ * The branches /sandbox-on-branch can offer in its selection list: local
+ * branches plus remote-tracking branches, minus anything already checked out
+ * in a worktree (a branch can live in only one worktree at a time). Local
+ * branches come first, then remote branches, each group sorted. Remote
+ * branches appear by their remote-ref name (e.g. `origin/feature`); remote
+ * `HEAD` symrefs (e.g. `origin/HEAD`) are skipped. A remote branch whose
+ * derived local name is checked out is omitted (it can't be sandboxed).
+ */
+export async function listSandboxableBranches(
+  cwd: string,
+): Promise<string[]> {
+  const checkedOut = await worktreeBranches(cwd);
+  const res = await git(cwd, [
+    "for-each-ref",
+    "--format=%(refname)",
+    "refs/heads/",
+    "refs/remotes/",
+  ]);
+  const local: string[] = [];
+  const remote: string[] = [];
+  if (res.ok) {
+    for (const line of res.stdout.split("\n")) {
+      const refname = line.trim();
+      if (refname.startsWith("refs/heads/")) {
+        const name = refname.slice("refs/heads/".length);
+        if (name.length > 0 && !checkedOut.has(refname)) local.push(name);
+      } else if (refname.startsWith("refs/remotes/")) {
+        const remoteRef = refname.slice("refs/remotes/".length);
+        if (remoteRef.endsWith("/HEAD")) continue; // remote HEAD symref
+        const slash = remoteRef.indexOf("/");
+        const localName = slash === -1 ? remoteRef : remoteRef.slice(slash + 1);
+        if (localName.length > 0 && !checkedOut.has(`refs/heads/${localName}`)) {
+          remote.push(remoteRef);
+        }
+      }
+    }
+  }
+  local.sort();
+  remote.sort();
+  return [...local, ...remote];
+}
