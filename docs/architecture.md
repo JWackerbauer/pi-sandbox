@@ -124,7 +124,11 @@ sandbox (`/exit-sandbox`), a non-display custom message
 by `src/preamble.ts` with the work branch and the host cwd) is appended to the
 context, telling the agent that its tools now run directly on the host, that its
 work is committed to its branch (which it may need to check out), and that the
-sandbox is torn down. Same mechanism, same prefix-cache rationale.
+sandbox is torn down. Same mechanism, same prefix-cache rationale. Unlike the
+preamble (which rides ahead of the first user prompt), it is sent with
+`triggerTurn: true` — the command handler awaits idle first, so the agent's turn
+starts right away and the session continues on the host without the user having
+to say anything.
 
 The skill templates live in `templates/skills/` (`.md` files with YAML front
 matter — pi needs the `name`/`description`); the non-skill preamble template is

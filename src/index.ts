@@ -643,14 +643,19 @@ export default function (pi: ExtensionAPI) {
       // Tell the agent its session parameters have changed: the exit notice
       // is a non-display custom message, like the sandbox preamble (no
       // system prompt modification, so the inference prefix cache stays
-      // intact). No triggerTurn: it only appends context; the next user
-      // message starts the turn.
-      pi.sendMessage({
-        customType: SANDBOX_EXIT_TYPE,
-        content: renderExitPreamble(templatesDir, branch, localCwd),
-        display: false,
-        details: { branch },
-      });
+      // intact). The handler awaited idle, so triggerTurn starts the
+      // agent's turn right away — the session continues on the host without
+      // the user having to say anything (mirroring how /build-in-sandbox
+      // starts the first turn right after entering the sandbox).
+      pi.sendMessage(
+        {
+          customType: SANDBOX_EXIT_TYPE,
+          content: renderExitPreamble(templatesDir, branch, localCwd),
+          display: false,
+          details: { branch },
+        },
+        { triggerTurn: true },
+      );
       // Reset the preamble guard so a re-entry (e.g. /build-in-sandbox in
       // the same session) sends a fresh sandbox preamble.
       preambleSentFor = null;
