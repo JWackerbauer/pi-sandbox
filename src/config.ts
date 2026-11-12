@@ -28,11 +28,28 @@ export interface SandboxEntryData {
   branch: string;
 }
 
+// Data of a `gondolin.sandbox-exited` session entry: the branch the sandbox
+// was exited from (kept in the shared .git for review/merge).
+export interface SandboxExitedEntryData {
+  branch: string;
+}
+
 // Custom message type of the sandbox preamble: the context sent (as a
 // non-display custom message) when a session switches into the sandbox, in
 // place of modifying the system prompt (which would invalidate the inference
 // prefix cache).
 export const SANDBOX_PREAMBLE_TYPE = "gondolin.sandbox-preamble";
+
+// Custom message type of the sandbox exit notice: the context sent (as a
+// non-display custom message, like the preamble) when a session exits the
+// sandbox back to the host.
+export const SANDBOX_EXIT_TYPE = "gondolin.sandbox-exit";
+
+// Custom session entry type marking the sandbox as exited, so a resumed
+// session continues on the host instead of bringing the sandbox back up
+// (a newer `gondolin.sandbox` entry — a re-entry via /build-in-sandbox —
+// overrides it).
+export const SANDBOX_EXITED_TYPE = "gondolin.sandbox-exited";
 
 // Custom message type of the proactive subagent settlement notice, queued
 // into the parent session when a subagent finishes.

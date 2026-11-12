@@ -4,7 +4,6 @@ import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
-  SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
   createBashTool,
@@ -15,15 +14,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import {
-  SANDBOX_ENTRY_TYPE,
+  SANDBOX_EXIT_TYPE,
   SANDBOX_PREAMBLE_TYPE,
   SUBAGENT_RESULT_TYPE,
   SUBAGENT_STATUS_TYPE,
-  type SandboxEntryData,
 } from "./config";
 import { loadGondolinConfig } from "./config-loader";
 import { maybeLoadDotEnv } from "./dotenv";
-import { renderPreamble } from "./preamble";
+import { renderExitPreamble, renderPreamble } from "./preamble";
+import { lastSandboxBranch } from "./last-sandbox-branch";
 import {
   buildSkillContext,
   isHostServedPath,
@@ -34,6 +33,7 @@ import {
 import { createSandbox } from "./vm";
 import { VmStartupWidget } from "./startup-widget";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
+import { registerExitCommand } from "./commands/exit-sandbox";
 import {
   createSubagentManager,
   formatSettledNotice,
@@ -619,7 +619,8 @@ export default function (pi: ExtensionAPI) {
 
   // Bring the sandbox back up when a session that ran in the sandbox is
   // started, resumed, reloaded, or forked. /build-in-sandbox persists the
-  // work branch as a custom entry.
+  // work branch as a custom entry; /exit-sandbox persists the exit as one,
+  // which suppresses the relaunch (resume on the host).
   pi.on("session_start", async (_event, ctx) => {
     touch(ctx);
     const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
@@ -633,6 +634,29 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  // /exit-sandbox: ends the sandbox (VM torn down, worktree cleaned up) and
+  // continues the session on the host. The work branch is kept in the shared
+  // .git, and the exit is persisted so a resumed session does not bring the
+  // sandbox back up.
+  registerExitCommand(pi, sandbox, {
+    onSandboxExit: (ctx, branch) => {
+      // Tell the agent its session parameters have changed: the exit notice
+      // is a non-display custom message, like the sandbox preamble (no
+      // system prompt modification, so the inference prefix cache stays
+      // intact). No triggerTurn: it only appends context; the next user
+      // message starts the turn.
+      pi.sendMessage({
+        customType: SANDBOX_EXIT_TYPE,
+        content: renderExitPreamble(templatesDir, branch, localCwd),
+        display: false,
+        details: { branch },
+      });
+      // Reset the preamble guard so a re-entry (e.g. /build-in-sandbox in
+      // the same session) sends a fresh sandbox preamble.
+      preambleSentFor = null;
+    },
+  });
+
   // Serve gondolin's skills as rendered templates: the raw .md files in the
   // package's templates/skills/ directory are templates, rendered with a
   // context derived from the config (available github hosts, secrets,
@@ -642,18 +666,4 @@ export default function (pi: ExtensionAPI) {
   pi.on("resources_discover", () => {
     return { skillPaths: [skillsDir] };
   });
-}
-
-// The work branch of the most recent /build-in-sandbox in this session
-// branch, if any.
-function lastSandboxBranch(
-  entries: SessionEntry[],
-): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry.type === "custom" && entry.customType === SANDBOX_ENTRY_TYPE) {
-      return (entry.data as SandboxEntryData | undefined)?.branch;
-    }
-  }
-  return undefined;
 }

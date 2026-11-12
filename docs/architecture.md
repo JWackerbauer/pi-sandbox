@@ -118,6 +118,14 @@ the preamble; they ship as skills (`templates/skills/sandbox.md`,
 `templates/skills/subagents.md`, `templates/skills/github.md`) that pi loads from
 this package, so they only cost tokens when the agent loads the skill.
 
+The **exit notice** is the preamble's counterpart: when the user exits the
+sandbox (`/exit-sandbox`), a non-display custom message
+(`customType: gondolin.sandbox-exit`, rendered from `templates/exit-preamble.md`
+by `src/preamble.ts` with the work branch and the host cwd) is appended to the
+context, telling the agent that its tools now run directly on the host, that its
+work is committed to its branch (which it may need to check out), and that the
+sandbox is torn down. Same mechanism, same prefix-cache rationale.
+
 The skill templates live in `templates/skills/` (`.md` files with YAML front
 matter — pi needs the `name`/`description`); the non-skill preamble template is
 `templates/preamble.md`, one level up, so it never reaches the skill pipeline
@@ -157,6 +165,15 @@ for the tradeoffs (worktree copy, guest read-only mount, host-serve).
   branch's commits already live in the shared `.git`), and (3) closes the VM. A crash
   before this runs leaves a stale registration, which `prepare.sh` detects on the next
   start (see [The guest](#the-guest)).
+- On `/exit-sandbox` the session leaves the sandbox without ending: the wrapper's
+  `teardown()` awaits any in-flight launch, removes the worktree in the guest, and
+  closes the VM (the same selective removal as shutdown). The session then continues
+  on the host — the wrapped tools fall back to the local host tools because the
+  sandbox is no longer active. The work branch and its commits stay in the shared
+  `.git` (the persistent artifact for review & merge), and a `gondolin.sandbox-exited`
+  entry is appended so resuming the session does not relaunch the sandbox (see
+  [Sessions](#sessions)). Running subagents are left alone: they are detached
+  sessions with their own VMs and branches.
 - The status bar shows `gondolin: <state>` / `gondolin: <branch>` plus the number of
   running subagents, refreshed on launch, shutdown, and subagent state changes.
 
@@ -172,6 +189,12 @@ for the tradeoffs (worktree copy, guest read-only mount, host-serve).
   branch, so `pi -c` / `/resume` continues where you left off. The session is
   renamed `gondolin: <branch>` so it is recognizable in `/resume` (the name is
   cosmetic; the branch is what is persisted).
+- `/exit-sandbox` appends a `gondolin.sandbox-exited` entry after the
+  `gondolin.sandbox` entry. `lastSandboxBranch` (`src/last-sandbox-branch.ts`) scans
+  the session branch backwards and stops at the first of either type: a newer exit
+  entry means the session exited the sandbox, so `session_start` resumes on the
+  host without relaunching the VM. A later `/build-in-sandbox` appends a newer
+  `gondolin.sandbox` entry, which overrides the exit (re-entry works).
 - On `session_shutdown` the VM is closed (see [VM lifecycle](#vm-lifecycle)).
 
 ## Branch naming
@@ -320,6 +343,8 @@ stock image:
 | `index.ts` | Extension entry point (re-exports `src/index.ts`; kept at the package root so pi lists the extension as "pi-sandbox") |
 | `src/index.ts` | Extension factory: registers the command, tools, and session hooks |
 | `src/commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
+| `src/commands/exit-sandbox.ts` | The `/exit-sandbox` command (teardown, exit entry, exit notice) |
+| `src/last-sandbox-branch.ts` | Session-entry lookup: which branch (if any) a resumed session relaunches the sandbox for |
 | `src/vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal, post-startup commands |
 | `src/subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
 | `src/config.ts` | Guest layout, git identity fallback, limits, session entry type, config contract |
@@ -336,4 +361,5 @@ stock image:
 | `templates/skills/github.md` | Bundled GitHub (`gh` CLI + magic dir) usage skill |
 | `templates/skills/sandbox.md` | Bundled sandbox skill (reachable hosts, secrets, features) |
 | `templates/preamble.md` | Sandbox preamble template (non-skill; branch, workspace, skill list) |
+| `templates/exit-preamble.md` | Sandbox exit-notice template (non-skill; branch, host cwd) |
 | `image/image.json` | Gondolin guest image definition (stock image) |

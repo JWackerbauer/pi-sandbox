@@ -346,6 +346,12 @@ export interface GondolinSandbox {
    */
   removeWorktree: () => Promise<void>;
   /**
+   * Tear the sandbox down: await an in-flight launch (e.g. started by
+   * /build-in-sandbox in parallel with the first turn), remove this
+   * session's worktree while the guest still has it, and close the VM.
+   */
+  teardown: () => Promise<void>;
+  /**
    * Launch the VM for the given work branch. If a VM is already running
    * for that branch it is returned; a VM running for a different branch
    * is closed and replaced.
@@ -464,6 +470,21 @@ export function createSandbox(
     await removeDetachedWorktree(vm, branch);
   }
 
+  // Full teardown for /exit-sandbox: await an in-flight launch (so the
+  // worktree removal runs against a live guest), remove the worktree, and
+  // close the VM. A failed in-flight launch leaves nothing to tear down.
+  async function teardown(): Promise<void> {
+    if (starting) {
+      try {
+        await starting.promise;
+      } catch {
+        // The launch failed; its half-configured VM is already closed.
+      }
+    }
+    await removeWorktree();
+    await close();
+  }
+
   async function close(): Promise<void> {
     if (!vm) return;
     try {
@@ -478,6 +499,7 @@ export function createSandbox(
     launch,
     requireVm,
     removeWorktree,
+    teardown,
     close,
     get active() {
       return vm !== null || starting !== null;

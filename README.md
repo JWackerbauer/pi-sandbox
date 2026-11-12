@@ -11,6 +11,7 @@ Run pi's agent tools inside a lightweight [Gondolin](https://github.com/earendil
 - Agents can start subagents who in turn have their own worktrees based on the main agents branch.
 - pi Sessions & branches are named consistently and automatically.
 - Resuming a session brings the VM & Worktree back along with the context.
+- The sandbox can be exited again: `/exit-sandbox` tears the VM & worktree down and continues the session on the host, keeping the work branch for review.
 - Context pollution is kept to a minimum, agents have access to templated skills in VM, used to gather context on demand.
 
 In addition to isolating agents from the host machine, the sandboxed worktrees are a powerful orchestration tool. 
@@ -46,6 +47,8 @@ pi install .
 You can now transport any pi session into a sandboxed worktree using `/build-in-sandbox <your prompt>`.
 
 You can also start a sandbox session directly from the commandline (useful for integrating into scripts): `pi '/build-in-sandbox <your prompt>'`
+
+When you are done with the sandbox, `/exit-sandbox` tears the VM and its worktree down and continues the same session on the host. Your work branch is kept in the shared repository (the host can review & merge it), and resuming the session does not bring the sandbox back up — run `/build-in-sandbox` again to sandbox the session a second time.
 
 ## Configuration
 
