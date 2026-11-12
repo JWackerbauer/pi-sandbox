@@ -354,9 +354,15 @@ export interface GondolinSandbox {
   /**
    * Launch the VM for the given work branch. If a VM is already running
    * for that branch it is returned; a VM running for a different branch
-   * is closed and replaced.
+   * is closed and replaced. `branchStart` (optional) is the ref a missing
+   * local branch is created from — e.g. a remote-tracking branch for
+   * /sandbox-on-branch on a remote branch (see prepare.sh).
    */
-  launch: (branch: string, ctx?: ExtensionContext) => Promise<VM>;
+  launch: (
+    branch: string,
+    ctx?: ExtensionContext,
+    opts?: { branchStart?: string },
+  ) => Promise<VM>;
   /** True when a VM is running or a launch is in flight. */
   readonly active: boolean;
   /**
@@ -391,6 +397,7 @@ export function createSandbox(
   async function doLaunch(
     requested: string,
     ctx?: ExtensionContext,
+    branchStart?: string,
   ): Promise<VM> {
     try {
       callbacks.onLaunchStart?.(requested);
@@ -398,6 +405,7 @@ export function createSandbox(
       const created = await launchDetachedVm(requested, {
         localCwd,
         localGitDir,
+        branchStart,
         // Progress lines go to the caller (index.ts renders them in the
         // startup widget), not to the transcript — boot logs must not mix
         // with the first turn's output.
@@ -426,6 +434,7 @@ export function createSandbox(
   async function launch(
     requested: string,
     ctx?: ExtensionContext,
+    opts?: { branchStart?: string },
   ): Promise<VM> {
     if (vm && branch === requested) return vm;
     if (starting && starting.branch === requested) return starting.promise;
@@ -442,7 +451,10 @@ export function createSandbox(
     // system-prompt section, subagent parent-branch lookup) see the correct
     // branch while the VM is still booting.
     branch = requested;
-    const entry = { branch: requested, promise: doLaunch(requested, ctx) };
+    const entry = {
+      branch: requested,
+      promise: doLaunch(requested, ctx, opts?.branchStart),
+    };
     starting = entry;
     try {
       return await entry.promise;

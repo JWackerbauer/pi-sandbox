@@ -23,6 +23,8 @@ import { loadGondolinConfig } from "./config-loader";
 import { maybeLoadDotEnv } from "./dotenv";
 import { renderExitPreamble, renderPreamble } from "./preamble";
 import { lastSandboxBranch } from "./last-sandbox-branch";
+import { resolveSandboxBranch } from "./branch-ref";
+import { listSandboxableBranches } from "./branch-ref";
 import {
   buildSkillContext,
   isHostServedPath,
@@ -33,6 +35,7 @@ import {
 import { createSandbox } from "./vm";
 import { VmStartupWidget } from "./startup-widget";
 import { registerBuildCommand } from "./commands/build-in-sandbox";
+import { registerSandboxOnBranchCommand } from "./commands/sandbox-on-branch";
 import { registerExitCommand } from "./commands/exit-sandbox";
 import {
   createSubagentManager,
@@ -615,6 +618,23 @@ export default function (pi: ExtensionAPI) {
           (err) => resolve(err === null),
         );
       }),
+  });
+
+  // /sandbox-on-branch <branch>: sandbox an existing local or remote branch
+  // that is not currently checked out. Host-side resolution (resolveSandbox-
+  // Branch) maps the name to the local branch to check out — creating a
+  // local tracking branch from a remote ref when needed — and reports whether
+  // it is already checked out in a worktree (a branch can live in only one
+  // worktree at a time, so such a branch is refused). Unlike /build-in-
+  // sandbox it names no branch and starts no build turn: the user drives the
+  // first turn.
+  registerSandboxOnBranchCommand(pi, sandbox, {
+    onSandboxStart: (ctx, branch) => {
+      enterSandbox(ctx);
+      sendSandboxPreamble(ctx, branch);
+    },
+    resolveBranch: (name) => resolveSandboxBranch(localCwd, name),
+    listBranches: () => listSandboxableBranches(localCwd),
   });
 
   // Bring the sandbox back up when a session that ran in the sandbox is
