@@ -101,15 +101,16 @@ export default function (pi: ExtensionAPI) {
   // place of modifying the system prompt — the latter invalidates the
   // inference prefix cache. No triggerTurn: the preamble only appends
   // context; the next user message starts the turn. One preamble per branch
-  // per session (force bypasses the guard), so the first tool call awaiting
-  // /sandbox-build's in-flight launch does not duplicate it.
+  // per process, so the first tool call awaiting /sandbox-build's in-flight
+  // launch does not duplicate it. A resumed session gets no fresh preamble:
+  // the original is still in the conversation history, and the content is a
+  // pure function of branch and skill names, so nothing has changed.
   let preambleSentFor: string | null = null;
   function sendSandboxPreamble(
     ctx: ExtensionContext,
     branch: string,
-    force = false,
   ): void {
-    if (!force && preambleSentFor === branch) return;
+    if (preambleSentFor === branch) return;
     preambleSentFor = branch;
     pi.sendMessage(
       {
@@ -641,17 +642,17 @@ export default function (pi: ExtensionAPI) {
   // Bring the sandbox back up when a session that ran in the sandbox is
   // started, resumed, reloaded, or forked. /sandbox-build persists the
   // work branch as a custom entry; /sandbox-exit persists the exit as one,
-  // which suppresses the relaunch (resume on the host).
+  // which suppresses the relaunch (resume on the host). No fresh preamble:
+  // resuming is not a transition — the original preamble is still in the
+  // conversation history and its content (branch, workspace, skill names)
+  // is unchanged, so appending a duplicate would only cost prefix-cache
+  // tokens.
   pi.on("session_start", async (_event, ctx) => {
     touch(ctx);
     const branch = lastSandboxBranch(ctx.sessionManager.getBranch());
     if (branch) {
       enterSandbox(ctx);
       await sandbox.launch(branch, ctx);
-      // Refresh the sandbox context: the session resumes in the sandbox, and
-      // a fresh preamble is cheap and covers config changes since the
-      // original session (the stale one stays in the conversation history).
-      sendSandboxPreamble(ctx, branch, true);
     }
   });
 

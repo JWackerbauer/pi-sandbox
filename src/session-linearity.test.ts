@@ -583,8 +583,9 @@ test("repeated sandbox enter/exit/resume keeps the session history fully linear 
   );
 
   // Phase 4: resume a session that ended in the sandbox (pi process
-  // restart). session_start relaunches the VM for the last branch and
-  // refreshes the preamble — appended at the tail, not inserted earlier.
+  // restart). session_start relaunches the VM for the last branch — and
+  // sends no fresh preamble: the original is still in the conversation
+  // history and resuming is not a transition.
   await sessionStart({}, ctx);
   session.appendMessage(assistantMessage("resumed in the sandbox"));
   prefix.record("resume while sandboxed", session);
@@ -596,8 +597,8 @@ test("repeated sandbox enter/exit/resume keeps the session history fully linear 
   );
   assert.equal(
     customMessages(session, SANDBOX_PREAMBLE_TYPE).length,
-    3,
-    "resume refreshes the preamble (stale one stays in history)",
+    2,
+    "resume sends no fresh preamble (the original is in history)",
   );
 
   // Phase 5: exit the sandbox again.
@@ -622,15 +623,16 @@ test("repeated sandbox enter/exit/resume keeps the session history fully linear 
   assert.equal(session.getEntries().length, entriesBefore);
   assert.deepEqual(session.llmMessages(), messagesBefore);
 
-  // The full history is linear: 14 LLM messages + 2 sandbox entries + 2
-  // exit entries (18 entries), each a direct child of the previous entry.
+  // The full history is linear: 13 LLM messages + 2 sandbox entries + 2
+  // exit entries (17 entries), each a direct child of the previous entry.
   assertLinear(session);
-  assert.equal(session.getEntries().length, 18);
-  assert.equal(session.llmMessages().length, 14);
+  assert.equal(session.getEntries().length, 17);
+  assert.equal(session.llmMessages().length, 13);
 
   // The exact interleaving the agent sees: preamble before the first
   // sandbox prompt, exit notice before the post-exit reply, a fresh
-  // preamble on every re-entry and resume — all appended at the tail.
+  // preamble on re-entry (the exit reset the guard) — all appended at the
+  // tail; resume adds nothing.
   assert.deepEqual(signature(session.llmMessages()), [
     "user: hello",
     "assistant: hi, how can I help?",
@@ -642,7 +644,6 @@ test("repeated sandbox enter/exit/resume keeps the session history fully linear 
     `custom: ${SANDBOX_PREAMBLE_TYPE}`,
     "user: build another thing",
     "assistant: working again (in sandbox)",
-    `custom: ${SANDBOX_PREAMBLE_TYPE}`,
     "assistant: resumed in the sandbox",
     `custom: ${SANDBOX_EXIT_TYPE}`,
     "assistant: back on the host again",
