@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SANDBOX_ENTRY_TYPE, SESSION_NAME_PREFIX } from "../config";
 import type { ResolvedSandboxBranch } from "../branch-ref";
+import { BranchSelectComponent } from "../branch-select";
 import type { GondolinSandbox } from "../vm";
 
 export interface SandboxOnBranchOptions {
@@ -52,13 +53,14 @@ export function registerSandboxOnBranchCommand(
     handler: async (args, ctx) => {
       let name = args.trim();
       if (name.length === 0) {
-        // No explicit branch: offer a selection list of the branches that can
-        // be sandboxed (local + remote, minus any already checked out). Fall
-        // back to free text when there is nothing to list, so a name that
-        // exists but wasn't listed can still be entered.
+        // No explicit branch: offer the branches that can be sandboxed
+        // (local + remote, minus any already checked out). Fall back to
+        // free text when there is nothing to list, so a name that exists
+        // but wasn't listed can still be entered.
         const candidates = await opts.listBranches();
         if (candidates.length > 0) {
-          const chosen = await ctx.ui.select(
+          const chosen = await selectBranch(
+            ctx,
             "Choose a branch to sandbox (checked-out branches are omitted):",
             candidates,
           );
@@ -150,4 +152,31 @@ export function registerSandboxOnBranchCommand(
       });
     },
   });
+}
+
+// The no-argument branch selector. Prefers the fuzzy branch selector
+// (type to filter, via the interactive TUI's `custom` component slot); on
+// hosts without TUI support (e.g. RPC mode, where `custom` resolves to
+// undefined without showing anything) it falls back to the plain selector.
+async function selectBranch(
+  ctx: ExtensionContext,
+  title: string,
+  candidates: string[],
+): Promise<string | undefined> {
+  let shown = false;
+  const chosen = await ctx.ui.custom<string | undefined>(
+    (_tui, theme, keybindings, done) => {
+      shown = true;
+      return new BranchSelectComponent({
+        title,
+        branches: candidates,
+        theme,
+        keybindings,
+        onDone: done,
+      });
+    },
+  );
+  if (chosen !== undefined) return chosen;
+  if (shown) return undefined; // user cancelled the fuzzy selector
+  return ctx.ui.select(title, candidates);
 }

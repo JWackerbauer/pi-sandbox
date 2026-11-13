@@ -348,6 +348,9 @@ stock image:
 | `src/index.ts` | Extension factory: registers the command, tools, and session hooks |
 | `src/commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
 | `src/commands/exit-sandbox.ts` | The `/exit-sandbox` command (teardown, exit entry, exit notice) |
+| `src/commands/sandbox-on-branch.ts` | The `/sandbox-on-branch` command (sandbox an existing local/remote branch, fuzzy branch selector) |
+| `src/branch-ref.ts` | Resolving local/remote branch names to a worktree checkout (tracking branch + start ref, checked-out detection) |
+| `src/branch-select.ts` | Fuzzy-searchable branch selector TUI component (type to filter, via `ui.custom`) |
 | `src/last-sandbox-branch.ts` | Session-entry lookup: which branch (if any) a resumed session relaunches the sandbox for |
 | `src/vm.ts` | VM lifecycle: detached VM launch, single-VM sandbox wrapper, worktree removal, post-startup commands |
 | `src/subagents.ts` | Detached subagent sessions: spawn, background SDK agent runs, activity tracking, non-blocking status, shutdown |
