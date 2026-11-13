@@ -47,7 +47,7 @@ export const SANDBOX_EXIT_TYPE = "gondolin.sandbox-exit";
 
 // Custom session entry type marking the sandbox as exited, so a resumed
 // session continues on the host instead of bringing the sandbox back up
-// (a newer `gondolin.sandbox` entry — a re-entry via /build-in-sandbox —
+// (a newer `gondolin.sandbox` entry — a re-entry via /sandbox-build —
 // overrides it).
 export const SANDBOX_EXITED_TYPE = "gondolin.sandbox-exited";
 

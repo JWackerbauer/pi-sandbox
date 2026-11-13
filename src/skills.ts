@@ -22,7 +22,7 @@ import { renderTemplate, type TemplateContext } from "./skill-template";
 /** Placeholder body for skill stubs written before the sandbox starts. */
 const STUB_SKILL_BODY =
   "The gondolin sandbox is not active in this session yet. Run `" +
-  "/build-in-sandbox` to start it — this skill's content is populated " +
+  "/sandbox-build` to start it — this skill's content is populated " +
   "when the sandbox starts.";
 
 /**

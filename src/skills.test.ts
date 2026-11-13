@@ -81,7 +81,7 @@ test("stubSkillPaths stubs only the skill templates", () => {
   assert.deepEqual(fs.readdirSync(out), ["a.md"]);
   const stub = fs.readFileSync(path.join(out, "a.md"), "utf8");
   assert.ok(stub.startsWith(FRONT_MATTER));
-  assert.ok(stub.includes("/build-in-sandbox"));
+  assert.ok(stub.includes("/sandbox-build"));
 });
 
 test("renderedSkillPaths renders templates into a fresh per-process temp dir", () => {

@@ -32,7 +32,7 @@ export interface SandboxOnBranchOptions {
 // /sandbox-on-branch <branch>
 //
 // Spin up a sandbox on an existing local or remote branch — one that is not
-// currently checked out in any worktree. Unlike /build-in-sandbox this does
+// currently checked out in any worktree. Unlike /sandbox-build this does
 // not name a branch or start a build turn: it checks out (or, for a remote
 // branch, creates a local tracking branch from) the given branch as the
 // sandbox worktree and lets the user drive the first turn.

@@ -1,7 +1,7 @@
 // Tests for lastSandboxBranch (src/last-sandbox-branch.ts): the
 // session-start lookup that decides whether a resumed session brings the
 // sandbox back up. A gondolin.sandbox entry relaunches the sandbox for its
-// branch; a newer gondolin.sandbox-exited entry (from /exit-sandbox)
+// branch; a newer gondolin.sandbox-exited entry (from /sandbox-exit)
 // suppresses it, so the session resumes on the host.
 
 import test from "node:test";

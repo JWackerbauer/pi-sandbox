@@ -1,10 +1,10 @@
 // Session-entry lookup for the sandbox work branch: decides, at session
 // start, whether a resumed session brings the sandbox back up.
 //
-// /build-in-sandbox persists the work branch as a gondolin.sandbox custom
-// entry; /exit-sandbox persists the exit as a gondolin.sandbox-exited entry,
+// /sandbox-build persists the work branch as a gondolin.sandbox custom
+// entry; /sandbox-exit persists the exit as a gondolin.sandbox-exited entry,
 // which suppresses the relaunch — the session resumes on the host. (A
-// re-entry via /build-in-sandbox appends a newer sandbox entry, which
+// re-entry via /sandbox-build appends a newer sandbox entry, which
 // overrides the exit.)
 
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -15,8 +15,8 @@ import {
 } from "./config";
 
 /**
- * The work branch of the most recent /build-in-sandbox in this session
- * branch, if any. A /exit-sandbox entry newer than the sandbox entry
+ * The work branch of the most recent /sandbox-build in this session
+ * branch, if any. A /sandbox-exit entry newer than the sandbox entry
  * suppresses the relaunch: the session exited the sandbox, so it resumes on
  * the host.
  */

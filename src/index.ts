@@ -34,9 +34,9 @@ import {
 } from "./skills";
 import { createSandbox } from "./vm";
 import { VmStartupWidget } from "./startup-widget";
-import { registerBuildCommand } from "./commands/build-in-sandbox";
+import { registerBuildCommand } from "./commands/sandbox-build";
 import { registerSandboxOnBranchCommand } from "./commands/sandbox-on-branch";
-import { registerExitCommand } from "./commands/exit-sandbox";
+import { registerExitCommand } from "./commands/sandbox-exit";
 import {
   createSubagentManager,
   formatSettledNotice,
@@ -101,7 +101,7 @@ export default function (pi: ExtensionAPI) {
   // inference prefix cache. No triggerTurn: the preamble only appends
   // context; the next user message starts the turn. One preamble per branch
   // per session (force bypasses the guard), so the first tool call awaiting
-  // /build-in-sandbox's in-flight launch does not duplicate it.
+  // /sandbox-build's in-flight launch does not duplicate it.
   let preambleSentFor: string | null = null;
   function sendSandboxPreamble(
     ctx: ExtensionContext,
@@ -214,7 +214,7 @@ export default function (pi: ExtensionAPI) {
   // Enter the sandbox: render the real skill bodies in place (over the
   // stubs, same paths — no system-prompt change), create the subagent
   // manager, and register the session-scoped hooks (shutdown cleanup,
-  // user-! routing). Runs once, from /build-in-sandbox or session_start
+  // user-! routing). Runs once, from /sandbox-build or session_start
   // (resuming a sandbox session).
   let entered = false;
   function enterSandbox(ctx: ExtensionContext): void {
@@ -394,7 +394,7 @@ export default function (pi: ExtensionAPI) {
         {
           type: "text" as const,
           text:
-            "gondolin: the sandbox is not active — run /build-in-sandbox first",
+            "gondolin: the sandbox is not active — run /sandbox-build first",
         },
       ],
       details: {},
@@ -403,7 +403,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   // Spawn a detached sandbox session for a subagent. Same interface as
-  // /build-in-sandbox: the prompt is summarized into a branch name, a
+  // /sandbox-build: the prompt is summarized into a branch name, a
   // detached VM is launched for that branch (based on the parent's
   // branch), and a background agent session works on the prompt. This tool
   // returns as soon as the VM is up; the subagent keeps running while the
@@ -596,7 +596,7 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
-  // /build-in-sandbox <prompt>: names a branch, launches the VM for it,
+  // /sandbox-build <prompt>: names a branch, launches the VM for it,
   // and starts the first agent turn with the user's prompt (concurrently with
   // the VM launch). onSandboxStart activates the sandbox and sends the
   // preamble ahead of the first user prompt.
@@ -638,8 +638,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Bring the sandbox back up when a session that ran in the sandbox is
-  // started, resumed, reloaded, or forked. /build-in-sandbox persists the
-  // work branch as a custom entry; /exit-sandbox persists the exit as one,
+  // started, resumed, reloaded, or forked. /sandbox-build persists the
+  // work branch as a custom entry; /sandbox-exit persists the exit as one,
   // which suppresses the relaunch (resume on the host).
   pi.on("session_start", async (_event, ctx) => {
     touch(ctx);
@@ -654,7 +654,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // /exit-sandbox: ends the sandbox (VM torn down, worktree cleaned up) and
+  // /sandbox-exit: ends the sandbox (VM torn down, worktree cleaned up) and
   // continues the session on the host. The work branch is kept in the shared
   // .git, and the exit is persisted so a resumed session does not bring the
   // sandbox back up.
@@ -665,7 +665,7 @@ export default function (pi: ExtensionAPI) {
       // system prompt modification, so the inference prefix cache stays
       // intact). The handler awaited idle, so triggerTurn starts the
       // agent's turn right away — the session continues on the host without
-      // the user having to say anything (mirroring how /build-in-sandbox
+      // the user having to say anything (mirroring how /sandbox-build
       // starts the first turn right after entering the sandbox).
       pi.sendMessage(
         {
@@ -676,7 +676,7 @@ export default function (pi: ExtensionAPI) {
         },
         { triggerTurn: true },
       );
-      // Reset the preamble guard so a re-entry (e.g. /build-in-sandbox in
+      // Reset the preamble guard so a re-entry (e.g. /sandbox-build in
       // the same session) sends a fresh sandbox preamble.
       preambleSentFor = null;
     },

@@ -22,7 +22,7 @@ export interface BuildCommandOptions {
   isBranchTaken: (name: string) => Promise<boolean>;
 }
 
-// /build-in-sandbox [prompt]
+// /sandbox-build [prompt]
 //
 // Summarizes the prompt into a branch name with the current model, launches
 // the sandbox VM for that branch, and starts the first agent turn with the
@@ -38,7 +38,7 @@ export function registerBuildCommand(
   sandbox: GondolinSandbox,
   opts: BuildCommandOptions = {},
 ): void {
-  pi.registerCommand("build-in-sandbox", {
+  pi.registerCommand("sandbox-build", {
     description:
       "Build in the sandbox: summarize the idea into a branch name, " +
       "start the VM, and begin working on it",

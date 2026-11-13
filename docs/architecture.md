@@ -80,7 +80,7 @@ with wrappers that route their file operations into the guest (implementations i
   bash tools are registered as replacements for the built-ins — only their
   `execute` differs, so their prompt entries are byte-identical. The three
   subagent tools are registered from turn one too; before the sandbox is
-  entered they return "the sandbox is not active — run /build-in-sandbox
+  entered they return "the sandbox is not active — run /sandbox-build
   first". Skills are written at load time as **stubs** (real static front
   matter + placeholder body): pi discovers skills only at session
   start/reload and caches only the front matter — the body is re-read from
@@ -91,7 +91,7 @@ with wrappers that route their file operations into the guest (implementations i
   which touch the prompt).
 - **Tool routing** — each wrapped tool checks the sandbox state. If the VM
   is already up it is used; if a launch is in flight (e.g. started by
-  `/build-in-sandbox` in parallel with the first turn) `requireVm()` awaits
+  `/sandbox-build` in parallel with the first turn) `requireVm()` awaits
   that in-flight launch; if nothing is active (sandbox never entered, or a
   launch failed) the tool runs locally on the host. This is what lets the
   first turn stream its response while the VM boots — a tool call blocks on
@@ -108,7 +108,7 @@ distinct message role ahead of the first sandbox user prompt, invisible in the U
 It tells the model that the parameters of its ongoing session have changed: it is in
 `/<branch>` on its own branch, that only the git repository is persistent, that it
 must commit its work to its branch and ask the user to review & merge, and which
-skills carry the further detail. It is sent from two entry points: the `/build-in-sandbox` command (ahead of the
+skills carry the further detail. It is sent from two entry points: the `/sandbox-build` command (ahead of the
 first user prompt) and `session_start` (resuming/reloading/forking a sandbox session
 refreshes the context, covering config changes).
 
@@ -119,7 +119,7 @@ the preamble; they ship as skills (`templates/skills/sandbox.md`,
 this package, so they only cost tokens when the agent loads the skill.
 
 The **exit notice** is the preamble's counterpart: when the user exits the
-sandbox (`/exit-sandbox`), a non-display custom message
+sandbox (`/sandbox-exit`), a non-display custom message
 (`customType: gondolin.sandbox-exit`, rendered from `templates/exit-preamble.md`
 by `src/preamble.ts` with the work branch and the host cwd) is appended to the
 context, telling the agent that its tools now run directly on the host, that its
@@ -169,7 +169,7 @@ for the tradeoffs (worktree copy, guest read-only mount, host-serve).
   branch's commits already live in the shared `.git`), and (3) closes the VM. A crash
   before this runs leaves a stale registration, which `prepare.sh` detects on the next
   start (see [The guest](#the-guest)).
-- On `/exit-sandbox` the session leaves the sandbox without ending: the wrapper's
+- On `/sandbox-exit` the session leaves the sandbox without ending: the wrapper's
   `teardown()` awaits any in-flight launch, removes the worktree in the guest, and
   closes the VM (the same selective removal as shutdown). The session then continues
   on the host — the wrapped tools fall back to the local host tools because the
@@ -193,11 +193,11 @@ for the tradeoffs (worktree copy, guest read-only mount, host-serve).
   branch, so `pi -c` / `/resume` continues where you left off. The session is
   renamed `gondolin: <branch>` so it is recognizable in `/resume` (the name is
   cosmetic; the branch is what is persisted).
-- `/exit-sandbox` appends a `gondolin.sandbox-exited` entry after the
+- `/sandbox-exit` appends a `gondolin.sandbox-exited` entry after the
   `gondolin.sandbox` entry. `lastSandboxBranch` (`src/last-sandbox-branch.ts`) scans
   the session branch backwards and stops at the first of either type: a newer exit
   entry means the session exited the sandbox, so `session_start` resumes on the
-  host without relaunching the VM. A later `/build-in-sandbox` appends a newer
+  host without relaunching the VM. A later `/sandbox-build` appends a newer
   `gondolin.sandbox` entry, which overrides the exit (re-entry works).
 - On `session_shutdown` the VM is closed (see [VM lifecycle](#vm-lifecycle)).
 
@@ -346,8 +346,8 @@ stock image:
 |---|---|
 | `index.ts` | Extension entry point (re-exports `src/index.ts`; kept at the package root so pi lists the extension as "pi-sandbox") |
 | `src/index.ts` | Extension factory: registers the command, tools, and session hooks |
-| `src/commands/build-in-sandbox.ts` | The `/build-in-sandbox` command |
-| `src/commands/exit-sandbox.ts` | The `/exit-sandbox` command (teardown, exit entry, exit notice) |
+| `src/commands/sandbox-build.ts` | The `/sandbox-build` command |
+| `src/commands/sandbox-exit.ts` | The `/sandbox-exit` command (teardown, exit entry, exit notice) |
 | `src/commands/sandbox-on-branch.ts` | The `/sandbox-on-branch` command (sandbox an existing local/remote branch, fuzzy branch selector) |
 | `src/branch-ref.ts` | Resolving local/remote branch names to a worktree checkout (tracking branch + start ref, checked-out detection) |
 | `src/branch-select.ts` | Fuzzy-searchable branch selector TUI component (type to filter, via `ui.custom`) |

@@ -2,11 +2,11 @@
 // into (or back into) a gondolin sandbox, in place of modifying the system
 // prompt. Modifying the system prompt invalidates the inference prefix
 // cache, so the preamble travels as a (non-display) custom message attached
-// to the first sandbox turn's user prompt (see index.ts / build-in-sandbox.ts).
+// to the first sandbox turn's user prompt (see index.ts / sandbox-build.ts).
 //
 // The exit notice is its counterpart: the same mechanism (a non-display
 // custom message) telling the agent that the session has left the sandbox
-// and is back on the host (see index.ts / exit-sandbox.ts).
+// and is back on the host (see index.ts / sandbox-exit.ts).
 //
 // Both are templates (templates/preamble.md and templates/exit-preamble.md
 // — plain templates, not skills: the skill templates live one level down, in

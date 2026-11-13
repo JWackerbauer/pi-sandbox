@@ -13,7 +13,7 @@ export interface ExitCommandOptions {
   onSandboxExit?: (ctx: ExtensionContext, branch: string) => void;
 }
 
-// /exit-sandbox
+// /sandbox-exit
 //
 // Ends the sandbox: tears down the VM, removes the session's worktree, and
 // continues the session on the host (the wrapped tools fall back to the
@@ -26,7 +26,7 @@ export function registerExitCommand(
   sandbox: GondolinSandbox,
   opts: ExitCommandOptions = {},
 ): void {
-  pi.registerCommand("exit-sandbox", {
+  pi.registerCommand("sandbox-exit", {
     description:
       "Exit the sandbox: tear down the VM and worktree, and continue the " +
       "session on the host (your work branch is kept)",

@@ -347,7 +347,7 @@ export interface GondolinSandbox {
   removeWorktree: () => Promise<void>;
   /**
    * Tear the sandbox down: await an in-flight launch (e.g. started by
-   * /build-in-sandbox in parallel with the first turn), remove this
+   * /sandbox-build in parallel with the first turn), remove this
    * session's worktree while the guest still has it, and close the VM.
    */
   teardown: () => Promise<void>;
@@ -367,9 +367,9 @@ export interface GondolinSandbox {
   readonly active: boolean;
   /**
    * The running VM, or the VM of an in-flight launch (e.g. started by
-   * /build-in-sandbox in parallel with the first turn). Throws if no VM
+   * /sandbox-build in parallel with the first turn). Throws if no VM
    * exists and no launch is in flight — the sandbox must be started with
-   * /build-in-sandbox first.
+   * /sandbox-build first.
    */
   requireVm: (ctx?: ExtensionContext) => Promise<VM>;
   /** Close the running VM, if any. */
@@ -465,11 +465,11 @@ export function createSandbox(
 
   async function requireVm(ctx?: ExtensionContext): Promise<VM> {
     if (vm) return vm;
-    // A launch is already in flight (e.g. /build-in-sandbox started it in
+    // A launch is already in flight (e.g. /sandbox-build started it in
     // parallel with the first turn): await that VM.
     if (starting) return starting.promise;
     throw new Error(
-      "gondolin: no VM is running — start the sandbox with /build-in-sandbox first",
+      "gondolin: no VM is running — start the sandbox with /sandbox-build first",
     );
   }
 
@@ -482,7 +482,7 @@ export function createSandbox(
     await removeDetachedWorktree(vm, branch);
   }
 
-  // Full teardown for /exit-sandbox: await an in-flight launch (so the
+  // Full teardown for /sandbox-exit: await an in-flight launch (so the
   // worktree removal runs against a live guest), remove the worktree, and
   // close the VM. A failed in-flight launch leaves nothing to tear down.
   async function teardown(): Promise<void> {

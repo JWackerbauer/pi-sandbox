@@ -12,7 +12,7 @@ Run pi's agent tools inside a lightweight [Gondolin](https://github.com/earendil
 - pi Sessions & branches are named consistently and automatically.
 - Resuming a session brings the VM & Worktree back along with the context.
 - Existing branches can be picked up in a sandbox: `/sandbox-on-branch <branch>` sandboxes any local or remote branch that is not already checked out.
-- The sandbox can be exited again: `/exit-sandbox` tears the VM & worktree down and continues the session on the host, keeping the work branch for review.
+- The sandbox can be exited again: `/sandbox-exit` tears the VM & worktree down and continues the session on the host, keeping the work branch for review.
 - Context pollution is kept to a minimum, agents have access to templated skills in VM, used to gather context on demand.
 
 In addition to isolating agents from the host machine, the sandboxed worktrees are a powerful orchestration tool. 
@@ -45,13 +45,13 @@ npm run build:basic-image
 pi install .
 ```
 
-You can now transport any pi session into a sandboxed worktree using `/build-in-sandbox <your prompt>`.
+You can now transport any pi session into a sandboxed worktree using `/sandbox-build <your prompt>`.
 
-You can also start a sandbox session directly from the commandline (useful for integrating into scripts): `pi '/build-in-sandbox <your prompt>'`
+You can also start a sandbox session directly from the commandline (useful for integrating into scripts): `pi '/sandbox-build <your prompt>'`
 
-To work on an existing branch in a sandbox, use `/sandbox-on-branch <branch>`. It accepts a local branch (`main`) or a remote branch (`origin/feature`): a local branch is checked out as the worktree, and a remote branch is checked out as a fresh local tracking branch created from the remote ref. Run it without an argument to pick from a selection list of the branches that can be sandboxed (local and remote, excluding any already checked out) — type to fuzzy-filter the list as you go. A branch that is already checked out in a worktree (on your host, or in another sandbox) can't be sandboxed, since git allows a branch in only one worktree at a time — the command tells you where it's checked out. Unlike `/build-in-sandbox`, it starts no build turn: the sandbox comes up on the branch and your next message drives the first turn.
+To work on an existing branch in a sandbox, use `/sandbox-on-branch <branch>`. It accepts a local branch (`main`) or a remote branch (`origin/feature`): a local branch is checked out as the worktree, and a remote branch is checked out as a fresh local tracking branch created from the remote ref. Run it without an argument to pick from a selection list of the branches that can be sandboxed (local and remote, excluding any already checked out) — type to fuzzy-filter the list as you go. A branch that is already checked out in a worktree (on your host, or in another sandbox) can't be sandboxed, since git allows a branch in only one worktree at a time — the command tells you where it's checked out. Unlike `/sandbox-build`, it starts no build turn: the sandbox comes up on the branch and your next message drives the first turn.
 
-When you are done with the sandbox, `/exit-sandbox` tears the VM and its worktree down and continues the same session on the host. Your work branch is kept in the shared repository (the host can review & merge it), and resuming the session does not bring the sandbox back up — run `/build-in-sandbox` again to sandbox the session a second time.
+When you are done with the sandbox, `/sandbox-exit` tears the VM and its worktree down and continues the same session on the host. Your work branch is kept in the shared repository (the host can review & merge it), and resuming the session does not bring the sandbox back up — run `/sandbox-build` again to sandbox the session a second time.
 
 ## Configuration
 
