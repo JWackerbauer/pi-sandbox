@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildAssets,
   parseBuildConfig,
@@ -27,12 +28,22 @@ const BUILD_LOG_FILE = "build.log";
 
 // Path of the stock image assets, relative to this module.
 export function stockImageDir(): string {
-  return path.join(path.resolve(__dirname), "..", "image", ASSETS_DIR_NAME);
+  return path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "image",
+    ASSETS_DIR_NAME,
+  );
 }
 
 // Path of the stock image's build config.
 function stockImageConfigPath(): string {
-  return path.join(path.resolve(__dirname), "..", "image", "image.json");
+  return path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "image",
+    "image.json",
+  );
 }
 
 /**

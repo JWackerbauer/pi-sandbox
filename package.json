@@ -3,7 +3,7 @@
     "version": "0.0.1",
     "description": "Run pi's agent tools inside a Gondolin VM: a per-branch sandbox with detached subagent sessions.",
     "license": "ISC",
-    "type": "commonjs",
+    "type": "module",
     "main": "index.ts",
     "keywords": [
         "pi-package"
@@ -17,7 +17,7 @@
     },
     "scripts": {
         "build:basic-image": "gondolin build --config image/image.json --output image/assets",
-        "test": "tsx --test 'src/*.test.ts'"
+        "test": "tsx --test --experimental-test-module-mocks 'src/*.test.ts'"
     },
     "dependencies": {
         "@earendil-works/gondolin": "^0.13.0"

@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   VM,
   RealFSProvider,
@@ -192,7 +193,7 @@ export async function launchDetachedVm(
     mounts[GUEST_MAGIC_DIR] = new MagicGitProvider({ hosts: magicHosts, cloneRoot });
   }
 
-  const moduleRoot = path.resolve(__dirname);
+  const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
   const created = await VM.create({
     sandbox: {
       imagePath,

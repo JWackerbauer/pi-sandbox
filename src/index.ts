@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -55,7 +56,7 @@ export default function (pi: ExtensionAPI) {
 
   // Package root and the template dirs: the skill templates live in
   // templates/skills/, the (non-skill) preamble template in templates/.
-  const packageDir = path.resolve(__dirname, "..");
+  const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const templatesDir = path.join(packageDir, "templates");
   const skillsTemplateDir = path.join(templatesDir, "skills");
 

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   EXIT_PREAMBLE_TEMPLATE_FILE,
   PREAMBLE_TEMPLATE_FILE,
@@ -46,7 +47,7 @@ test("renderPreamble collapses blank-line runs and trims the result", () => {
 
 test("the shipped preamble template renders for a branch", () => {
   // The real package template (templates/preamble.md) must render cleanly.
-  const root = path.resolve(__dirname, "..");
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const out = renderPreamble(
     path.join(root, "templates"),
     "demo-branch",
@@ -76,7 +77,7 @@ test("renderExitPreamble collapses blank-line runs and trims the result", () => 
 test("the shipped exit-preamble template renders for a branch", () => {
   // The real package template (templates/exit-preamble.md) must render
   // cleanly and mention the branch, the host cwd, and the checkout.
-  const root = path.resolve(__dirname, "..");
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const out = renderExitPreamble(path.join(root, "templates"), "demo-branch", "/host/repo");
   assert.ok(out.includes("host repository root /host/repo"));
   assert.ok(out.includes("git checkout demo-branch"));
