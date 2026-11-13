@@ -519,6 +519,17 @@ test("repeated sandbox enter/exit/resume keeps the session history fully linear 
   );
   const preamble1 = customMessages(session, SANDBOX_PREAMBLE_TYPE)[0]!;
   assert.equal((preamble1 as CustomMessageEntry).display, false);
+  // The shipped template (templates/preamble.md) renders with the real
+  // values — this is the coverage that lives here now, at the level the
+  // agent sees it.
+  const preambleText = (preamble1 as CustomMessageEntry).content as string;
+  assert.ok(preambleText.includes("cwd is now /first-branch"));
+  assert.ok(preambleText.includes("branch: first-branch"));
+  assert.ok(
+    preambleText.includes("`github`, `sandbox`, `subagents`"),
+    "the skills list comes from the package's skill templates",
+  );
+  assert.ok(!preambleText.includes("{{"), "no unrendered template tags");
   assert.deepEqual(
     pi.sentUserMessages,
     ["build a thing"],
@@ -555,6 +566,13 @@ test("repeated sandbox enter/exit/resume keeps the session history fully linear 
   );
   const exitNotice1 = customMessages(session, SANDBOX_EXIT_TYPE)[0]!;
   assert.equal((exitNotice1 as CustomMessageEntry).display, false);
+  // The shipped exit template (templates/exit-preamble.md) renders with the
+  // real branch and host cwd.
+  const exitText = (exitNotice1 as CustomMessageEntry).content as string;
+  assert.ok(exitText.includes(`host repository root ${cwd}`));
+  assert.ok(exitText.includes("git checkout first-branch"));
+  assert.ok(exitText.includes("torn down"));
+  assert.ok(!exitText.includes("{{"), "no unrendered template tags");
   assert.equal(
     pi.sentMessages.find(
       (s) => s.message.customType === SANDBOX_EXIT_TYPE,
